@@ -7,82 +7,58 @@
         body { margin: 0; background: #000; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
         video { width: 100%; height: 100%; object-fit: contain; }
         
-        /* --- 顶部感应区域 --- */
         .top-hover-zone {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 80px; z-index: 200;
+            position: absolute; top: 0; left: 0; width: 100%; height: 80px; z-index: 200;
             display: flex; flex-direction: column;
         }
 
-        /* --- 控制栏样式 --- */
         .controls {
             width: 100%;
             background: rgba(0,0,0,0.85);
-            display: flex;
-            align-items: center;
-            padding: 8px 10px;
-            box-sizing: border-box;
-            
-            opacity: 0;
-            transform: translateY(-100%);
-            transition: all 0.3s ease;
-            
-            /* 允许拖拽背景 */
+            display: flex; align-items: center; padding: 8px 10px; box-sizing: border-box;
+            opacity: 0; transform: translateY(-100%); transition: all 0.3s ease;
             -webkit-app-region: drag; 
         }
 
-        .top-hover-zone:hover .controls {
-            opacity: 1;
-            transform: translateY(0);
-        }
+        .top-hover-zone:hover .controls { opacity: 1; transform: translateY(0); }
         
-        /* 通用按钮样式 */
+        /* --- 摸鱼模式下的布局 --- */
+        .controls.mini input { display: none !important; }
+        .controls.mini { justify-content: center; gap: 8px; }
+        
         input { 
             flex: 1; font-size: 12px; margin-right: 8px; outline: none; padding: 4px; 
             background: #333; color: white; border: 1px solid #555; border-radius: 4px;
             -webkit-app-region: no-drag; 
         }
         button { 
-            font-size: 12px; cursor: pointer; margin-right: 5px; padding: 4px 8px; 
+            font-size: 14px; /*稍微大一点点让图标清晰*/ cursor: pointer; margin-right: 0; 
+            padding: 4px 6px; /* 微调padding让按钮更方正 */
             background: #444; color: white; border: 1px solid #666; border-radius: 4px;
-            -webkit-app-region: no-drag; /* 普通按钮不可拖拽 */
+            -webkit-app-region: no-drag;
+            display: flex; align-items: center; justify-content: center; /* 确保图标居中 */
         }
         button:hover { background: #666; }
         
-        /* --- 【关键修改】移动手柄专用样式 (Div模拟按钮) --- */
+        /* 通用间距 */
+        .controls > * { margin-right: 5px; }
+        .controls.mini > * { margin-right: 0; } 
+
+        /* 移动手柄 */
         .btn-move {
-            /* 1. 核心：允许拖拽 */
-            -webkit-app-region: drag !important; 
-            
-            /* 2. 布局：让div看起来像按钮 */
-            display: inline-flex;
-            justify-content: center;
-            align-items: center;
-            box-sizing: border-box;
-            
-            /* 3. 外观：复刻普通按钮样式 */
-            width: 26px;  /* 固定宽度，更好看 */
-            height: 24px; /* 高度匹配旁边按钮 */
-            font-size: 14px;
-            margin-right: 5px; 
-            
-            cursor: move; /* 鼠标样式 */
-            background: #2b5c82; 
-            color: white; 
-            border: 1px solid #3e7ca8; 
-            border-radius: 4px;
-            
-            /* 4. 细节：防止拖拽时文字被选中 */
-            -webkit-user-select: none;
-            user-select: none;
+            -webkit-app-region: no-drag; 
+            display: inline-flex; justify-content: center; align-items: center; box-sizing: border-box;
+            width: 26px; height: 26px; /* 调整为方形 */ font-size: 14px; 
+            cursor: move; 
+            background: #2b5c82; color: white; border: 1px solid #3e7ca8; border-radius: 4px;
+            -webkit-user-select: none; user-select: none;
         }
         .btn-move:hover { background: #3e7ca8; }
 
-        /* 置顶按钮 */
-        #btnTop { font-size: 14px; padding: 2px 6px; }
-
-        /* 右侧窗口按钮组 */
-        .win-controls { display: flex; align-items: center; margin-left: 10px; }
+        #btnTop { font-size: 14px; padding: 4px 6px; }
+        .win-controls { display: flex; align-items: center; gap: 5px; margin-left: auto; }
+        .controls.mini .win-controls { margin-left: 0; }
+        
         .btn-close { background: #c00; border-color: #a00; }
         .btn-close:hover { background: #f00; }
     </style>
@@ -90,16 +66,17 @@
 <body>
     
     <div class="top-hover-zone">
-        <div class="controls">
+        <div class="controls" id="ctrlBar">
             <input type="text" id="urlInput" placeholder="粘贴 .m3u8 链接 或 拖入文件">
             
             <button id="btnTop" onclick="toggleTop()" title="置顶/取消">📌</button>
-            <button onclick="playInput()">播放</button>
-            <button onclick="toggleSize()">摸鱼/恢复</button>
+            
+            <button onclick="playInput()" title="播放">▶</button>
+            
+            <button onclick="toggleSize()" title="切换模式">📺</button>
             
             <div class="win-controls" id="winBtns" style="display:none;">
-                <div class="btn-move" title="按住拖动窗口">✥</div>
-                
+                <div class="btn-move" onmousedown="startDrag()" title="按住拖动窗口">✥</div>
                 <button onclick="winMin()" title="最小化">-</button>
                 <button class="btn-close" onclick="winClose()" title="关闭">×</button>
             </div>
@@ -113,6 +90,8 @@
         const video = document.getElementById('vPlayer');
         const input = document.getElementById('urlInput');
         const winBtns = document.getElementById('winBtns');
+        const ctrlBar = document.getElementById('ctrlBar');
+        
         let isMini = false;
         let isTop = false;
         let hls = null;
@@ -124,6 +103,10 @@
                 val = `http://127.0.0.1:${PORT}/${val}`;
             }
             loadVideo(val);
+        }
+
+        function startDrag() {
+            window.winMove();
         }
 
         function loadVideo(src) {
@@ -149,11 +132,11 @@
             toggleMode(isMini); 
             
             if(isMini) {
-                // 摸鱼模式：显示功能键，全屏感应
+                ctrlBar.classList.add('mini');
                 winBtns.style.display = 'flex';
                 document.querySelector('.top-hover-zone').style.height = '100%'; 
             } else {
-                // 正常模式
+                ctrlBar.classList.remove('mini');
                 winBtns.style.display = 'none';
                 document.querySelector('.top-hover-zone').style.height = '80px';
             }
@@ -164,29 +147,24 @@
             window.setTop(isTop);
             const btn = document.getElementById('btnTop');
             if (isTop) {
-                btn.style.background = '#2ea44f';
-                btn.style.borderColor = '#2ea44f';
+                btn.style.background = '#2ea44f'; btn.style.borderColor = '#2ea44f';
             } else {
-                btn.style.background = '#444';
-                btn.style.borderColor = '#666';
+                btn.style.background = '#444'; btn.style.borderColor = '#666';
             }
         }
 
-        // 拖拽文件支持
         document.body.addEventListener('dragover', e => e.preventDefault());
         document.body.addEventListener('drop', e => {
             e.preventDefault();
             if (e.dataTransfer.files.length > 0) {
-                const file = e.dataTransfer.files[0];
-                loadVideo(URL.createObjectURL(file));
+                loadVideo(URL.createObjectURL(e.dataTransfer.files[0]));
             }
         });
         
-        // 双击暂停/播放 (排除按钮和控制栏背景的干扰)
         document.body.addEventListener('dblclick', (e) => {
             if(e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+            if(e.target.classList.contains('btn-move')) return; 
             if(e.target.closest('.controls')) return; 
-            
             if(video.paused) video.play(); else video.pause();
         });
     </script>
