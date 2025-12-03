@@ -1,0 +1,32 @@
+   2 gcc -v
+   3 go run .
+   4 go run .
+   5 go run .
+   6 go run .
+   7 go run .
+   8 go run .
+   9 go run .
+  10 go run .
+  11 go run .
+  12 go run .
+  13 go run .
+  14 go run .\main.go
+  15 go run .
+  16 go run .
+  17 go run .
+  18 go run .
+  19 go run .
+  20 go run .
+  21 go run .
+  22 go run .
+  23 go run .
+  24 go run .
+  25 go run .
+  26 go run .
+  27 go run .
+  28 go run .
+  29 go run .
+  30 go install github.com/akavel/rsrc@latest
+  31 rsrc -ico icon.ico -o rsrc.syso
+  32 go run .
+  33 go build -ldflags "-H windowsgui" -o "邮箱助手.exe"
