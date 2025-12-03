@@ -15,48 +15,61 @@
         .controls {
             width: 100%;
             background: rgba(0,0,0,0.85);
-            display: flex; align-items: center; padding: 8px 10px; box-sizing: border-box;
+            display: flex; align-items: center; 
+            box-sizing: border-box;
+            
+            /* --- 【核心修改】极小字号适配 --- */
+            /* 320px时约6.4px，800px时16px */
+            font-size: clamp(6px, 2vw, 16px); 
+            
+            /* 稍微减小padding，让窄条更窄 */
+            padding: 0.5em 0.6em; 
+            
             opacity: 0; transform: translateY(-100%); transition: all 0.3s ease;
             -webkit-app-region: drag; 
         }
 
         .top-hover-zone:hover .controls { opacity: 1; transform: translateY(0); }
         
-        /* --- 摸鱼模式下的布局 --- */
         .controls.mini input { display: none !important; }
-        .controls.mini { justify-content: center; gap: 8px; }
+        .controls.mini { justify-content: center; gap: 0.6em; }
         
+        /* --- 控件样式 (em 单位自动跟随极小字体) --- */
         input { 
-            flex: 1; font-size: 12px; margin-right: 8px; outline: none; padding: 4px; 
-            background: #333; color: white; border: 1px solid #555; border-radius: 4px;
+            flex: 1; font-size: 1em; margin-right: 0.6em; outline: none; 
+            padding: 0.3em 0.5em; 
+            background: #333; color: white; border: 1px solid #555; border-radius: 0.3em;
             -webkit-app-region: no-drag; 
         }
+        
         button { 
-            font-size: 14px; /*稍微大一点点让图标清晰*/ cursor: pointer; margin-right: 0; 
-            padding: 4px 6px; /* 微调padding让按钮更方正 */
-            background: #444; color: white; border: 1px solid #666; border-radius: 4px;
+            font-size: 1em; cursor: pointer; margin-right: 0; 
+            padding: 0.3em 0.5em; 
+            background: #444; color: white; border: 1px solid #666; border-radius: 0.3em;
             -webkit-app-region: no-drag;
-            display: flex; align-items: center; justify-content: center; /* 确保图标居中 */
+            display: flex; align-items: center; justify-content: center;
+            
+            /* 确保图标有最小点击面积，避免小到看不见 */
+            min-width: 2em; 
+            height: 2em; 
         }
         button:hover { background: #666; }
         
-        /* 通用间距 */
-        .controls > * { margin-right: 5px; }
+        .controls > * { margin-right: 0.4em; }
         .controls.mini > * { margin-right: 0; } 
 
-        /* 移动手柄 */
         .btn-move {
             -webkit-app-region: no-drag; 
             display: inline-flex; justify-content: center; align-items: center; box-sizing: border-box;
-            width: 26px; height: 26px; /* 调整为方形 */ font-size: 14px; 
+            width: 2em; height: 2em; font-size: 1em; 
             cursor: move; 
-            background: #2b5c82; color: white; border: 1px solid #3e7ca8; border-radius: 4px;
+            background: #2b5c82; color: white; border: 1px solid #3e7ca8; border-radius: 0.3em;
             -webkit-user-select: none; user-select: none;
         }
         .btn-move:hover { background: #3e7ca8; }
 
-        #btnTop { font-size: 14px; padding: 4px 6px; }
-        .win-controls { display: flex; align-items: center; gap: 5px; margin-left: auto; }
+        #btnTop { font-size: 1em; padding: 0.3em 0.5em; }
+        .win-controls { display: flex; align-items: center; gap: 0.4em; margin-left: auto; }
         .controls.mini .win-controls { margin-left: 0; }
         
         .btn-close { background: #c00; border-color: #a00; }
@@ -70,9 +83,7 @@
             <input type="text" id="urlInput" placeholder="粘贴 .m3u8 链接 或 拖入文件">
             
             <button id="btnTop" onclick="toggleTop()" title="置顶/取消">📌</button>
-            
             <button onclick="playInput()" title="播放">▶</button>
-            
             <button onclick="toggleSize()" title="切换模式">📺</button>
             
             <div class="win-controls" id="winBtns" style="display:none;">
