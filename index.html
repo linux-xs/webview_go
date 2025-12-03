@@ -7,59 +7,119 @@
         body { margin: 0; background: #000; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
         video { width: 100%; height: 100%; object-fit: contain; }
         
-        /* 控制栏样式 */
+        /* --- 顶部感应区域 --- */
+        .top-hover-zone {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 80px; z-index: 200;
+            display: flex; flex-direction: column;
+        }
+
+        /* --- 控制栏样式 --- */
         .controls {
-            position: absolute;
-            bottom: 0;
-            left: 0;
             width: 100%;
-            background: rgba(0,0,0,0.7);
+            background: rgba(0,0,0,0.85);
             display: flex;
-            opacity: 0; 
-            transition: opacity 0.3s;
-            padding: 5px;
+            align-items: center;
+            padding: 8px 10px;
             box-sizing: border-box;
-            z-index: 200;
-        }
-        body:hover .controls { opacity: 1; }
-        
-        input { flex: 1; font-size: 10px; margin-right: 5px; outline: none; }
-        button { font-size: 10px; cursor: pointer; }
-        
-        /* 拖拽区域 */
-        .drag-zone {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 20px;
+            
+            opacity: 0;
+            transform: translateY(-100%);
+            transition: all 0.3s ease;
+            
+            /* 允许拖拽背景 */
             -webkit-app-region: drag; 
-            z-index: 100;
         }
+
+        .top-hover-zone:hover .controls {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        
+        /* 通用按钮样式 */
+        input { 
+            flex: 1; font-size: 12px; margin-right: 8px; outline: none; padding: 4px; 
+            background: #333; color: white; border: 1px solid #555; border-radius: 4px;
+            -webkit-app-region: no-drag; 
+        }
+        button { 
+            font-size: 12px; cursor: pointer; margin-right: 5px; padding: 4px 8px; 
+            background: #444; color: white; border: 1px solid #666; border-radius: 4px;
+            -webkit-app-region: no-drag; /* 普通按钮不可拖拽 */
+        }
+        button:hover { background: #666; }
+        
+        /* --- 【关键修改】移动手柄专用样式 (Div模拟按钮) --- */
+        .btn-move {
+            /* 1. 核心：允许拖拽 */
+            -webkit-app-region: drag !important; 
+            
+            /* 2. 布局：让div看起来像按钮 */
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            box-sizing: border-box;
+            
+            /* 3. 外观：复刻普通按钮样式 */
+            width: 26px;  /* 固定宽度，更好看 */
+            height: 24px; /* 高度匹配旁边按钮 */
+            font-size: 14px;
+            margin-right: 5px; 
+            
+            cursor: move; /* 鼠标样式 */
+            background: #2b5c82; 
+            color: white; 
+            border: 1px solid #3e7ca8; 
+            border-radius: 4px;
+            
+            /* 4. 细节：防止拖拽时文字被选中 */
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        .btn-move:hover { background: #3e7ca8; }
+
+        /* 置顶按钮 */
+        #btnTop { font-size: 14px; padding: 2px 6px; }
+
+        /* 右侧窗口按钮组 */
+        .win-controls { display: flex; align-items: center; margin-left: 10px; }
+        .btn-close { background: #c00; border-color: #a00; }
+        .btn-close:hover { background: #f00; }
     </style>
 </head>
 <body>
-    <div class="drag-zone"></div>
-    <video id="vPlayer" controls autoplay></video>
-
-    <div class="controls">
-        <input type="text" id="urlInput" placeholder="粘贴 .m3u8 链接 或 拖入文件">
-        <button onclick="playInput()">播放</button>
-        <button onclick="toggleSize()">摸鱼模式</button>
+    
+    <div class="top-hover-zone">
+        <div class="controls">
+            <input type="text" id="urlInput" placeholder="粘贴 .m3u8 链接 或 拖入文件">
+            
+            <button id="btnTop" onclick="toggleTop()" title="置顶/取消">📌</button>
+            <button onclick="playInput()">播放</button>
+            <button onclick="toggleSize()">摸鱼/恢复</button>
+            
+            <div class="win-controls" id="winBtns" style="display:none;">
+                <div class="btn-move" title="按住拖动窗口">✥</div>
+                
+                <button onclick="winMin()" title="最小化">-</button>
+                <button class="btn-close" onclick="winClose()" title="关闭">×</button>
+            </div>
+        </div>
     </div>
+
+    <video id="vPlayer" controls autoplay></video>
 
     <script>
         const PORT = "{{PORT}}";
         const video = document.getElementById('vPlayer');
         const input = document.getElementById('urlInput');
+        const winBtns = document.getElementById('winBtns');
         let isMini = false;
-        let hls = null; // 保存 hls 实例以便销毁
+        let isTop = false;
+        let hls = null;
 
         function playInput() {
             let val = input.value;
             if (!val) return;
-            
-            // 如果不是 http 开头，默认为本地文件，加上本地服务器前缀
             if (!val.startsWith('http') && !val.startsWith('blob:')) {
                 val = `http://127.0.0.1:${PORT}/${val}`;
             }
@@ -67,32 +127,18 @@
         }
 
         function loadVideo(src) {
-            // 1. 如果之前有 HLS 实例，先销毁，防止内存泄漏或声音重叠
-            if (hls) {
-                hls.destroy();
-                hls = null;
-            }
-
-            // 2. 判断是否是 M3U8 格式
+            if (hls) { hls.destroy(); hls = null; }
             if (src.includes('.m3u8')) {
-                // 情况 A: 浏览器支持 Hls.js (Windows/Chrome/Edge)
                 if (Hls.isSupported()) {
                     hls = new Hls();
                     hls.loadSource(src);
                     hls.attachMedia(video);
-                    hls.on(Hls.Events.MANIFEST_PARSED, function() {
-                        video.play();
-                    });
-                }
-                // 情况 B: 浏览器原生支持 HLS (主要是 Mac Safari)
-                else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    hls.on(Hls.Events.MANIFEST_PARSED, function() { video.play(); });
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
                     video.src = src;
-                    video.addEventListener('loadedmetadata', function() {
-                        video.play();
-                    });
+                    video.addEventListener('loadedmetadata', function() { video.play(); });
                 }
             } else {
-                // 3. 普通 MP4 或本地文件
                 video.src = src;
                 video.play();
             }
@@ -100,14 +146,29 @@
 
         function toggleSize() {
             isMini = !isMini;
-            toggleMode(isMini); // 调用 Go
+            toggleMode(isMini); 
             
             if(isMini) {
-                document.querySelector('.controls').style.display = 'none';
-                document.querySelector('.drag-zone').style.height = '100%';
+                // 摸鱼模式：显示功能键，全屏感应
+                winBtns.style.display = 'flex';
+                document.querySelector('.top-hover-zone').style.height = '100%'; 
             } else {
-                document.querySelector('.controls').style.display = 'flex';
-                document.querySelector('.drag-zone').style.height = '20px';
+                // 正常模式
+                winBtns.style.display = 'none';
+                document.querySelector('.top-hover-zone').style.height = '80px';
+            }
+        }
+
+        function toggleTop() {
+            isTop = !isTop;
+            window.setTop(isTop);
+            const btn = document.getElementById('btnTop');
+            if (isTop) {
+                btn.style.background = '#2ea44f';
+                btn.style.borderColor = '#2ea44f';
+            } else {
+                btn.style.background = '#444';
+                btn.style.borderColor = '#666';
             }
         }
 
@@ -117,15 +178,16 @@
             e.preventDefault();
             if (e.dataTransfer.files.length > 0) {
                 const file = e.dataTransfer.files[0];
-                const localUrl = URL.createObjectURL(file);
-                // 也要走 loadVideo 逻辑，虽然本地拖入一般不是 m3u8，但保持一致
-                loadVideo(localUrl);
+                loadVideo(URL.createObjectURL(file));
             }
         });
         
-        // 双击暂停/播放
-        document.body.addEventListener('dblclick', () => {
-             if(video.paused) video.play(); else video.pause();
+        // 双击暂停/播放 (排除按钮和控制栏背景的干扰)
+        document.body.addEventListener('dblclick', (e) => {
+            if(e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+            if(e.target.closest('.controls')) return; 
+            
+            if(video.paused) video.play(); else video.pause();
         });
     </script>
 </body>
