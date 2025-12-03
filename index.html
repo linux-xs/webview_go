@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
+        video { width: 100%; height: 100%; object-fit: contain; }
+        
+        /* 控制栏样式 */
+        .controls {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            opacity: 0; 
+            transition: opacity 0.3s;
+            padding: 5px;
+            box-sizing: border-box;
+            z-index: 200;
+        }
+        body:hover .controls { opacity: 1; }
+        
+        input { flex: 1; font-size: 10px; margin-right: 5px; outline: none; }
+        button { font-size: 10px; cursor: pointer; }
+        
+        /* 拖拽区域 */
+        .drag-zone {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 20px;
+            -webkit-app-region: drag; 
+            z-index: 100;
+        }
+    </style>
+</head>
+<body>
+    <div class="drag-zone"></div>
+    <video id="vPlayer" controls autoplay></video>
+
+    <div class="controls">
+        <input type="text" id="urlInput" placeholder="粘贴 .m3u8 链接 或 拖入文件">
+        <button onclick="playInput()">播放</button>
+        <button onclick="toggleSize()">摸鱼模式</button>
+    </div>
+
+    <script>
+        const PORT = "{{PORT}}";
+        const video = document.getElementById('vPlayer');
+        const input = document.getElementById('urlInput');
+        let isMini = false;
+        let hls = null; // 保存 hls 实例以便销毁
+
+        function playInput() {
+            let val = input.value;
+            if (!val) return;
+            
+            // 如果不是 http 开头，默认为本地文件，加上本地服务器前缀
+            if (!val.startsWith('http') && !val.startsWith('blob:')) {
+                val = `http://127.0.0.1:${PORT}/${val}`;
+            }
+            loadVideo(val);
+        }
+
+        function loadVideo(src) {
+            // 1. 如果之前有 HLS 实例，先销毁，防止内存泄漏或声音重叠
+            if (hls) {
+                hls.destroy();
+                hls = null;
+            }
+
+            // 2. 判断是否是 M3U8 格式
+            if (src.includes('.m3u8')) {
+                // 情况 A: 浏览器支持 Hls.js (Windows/Chrome/Edge)
+                if (Hls.isSupported()) {
+                    hls = new Hls();
+                    hls.loadSource(src);
+                    hls.attachMedia(video);
+                    hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                        video.play();
+                    });
+                }
+                // 情况 B: 浏览器原生支持 HLS (主要是 Mac Safari)
+                else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = src;
+                    video.addEventListener('loadedmetadata', function() {
+                        video.play();
+                    });
+                }
+            } else {
+                // 3. 普通 MP4 或本地文件
+                video.src = src;
+                video.play();
+            }
+        }
+
+        function toggleSize() {
+            isMini = !isMini;
+            toggleMode(isMini); // 调用 Go
+            
+            if(isMini) {
+                document.querySelector('.controls').style.display = 'none';
+                document.querySelector('.drag-zone').style.height = '100%';
+            } else {
+                document.querySelector('.controls').style.display = 'flex';
+                document.querySelector('.drag-zone').style.height = '20px';
+            }
+        }
+
+        // 拖拽文件支持
+        document.body.addEventListener('dragover', e => e.preventDefault());
+        document.body.addEventListener('drop', e => {
+            e.preventDefault();
+            if (e.dataTransfer.files.length > 0) {
+                const file = e.dataTransfer.files[0];
+                const localUrl = URL.createObjectURL(file);
+                // 也要走 loadVideo 逻辑，虽然本地拖入一般不是 m3u8，但保持一致
+                loadVideo(localUrl);
+            }
+        });
+        
+        // 双击暂停/播放
+        document.body.addEventListener('dblclick', () => {
+             if(video.paused) video.play(); else video.pause();
+        });
+    </script>
+</body>
+</html>
