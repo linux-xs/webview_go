@@ -14,9 +14,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv" // ✅ 新增
 	"strings"
 	"syscall"
 	"time"
+	"unsafe" // ✅ 新增
 
 	webview "github.com/webview/webview_go"
 )
@@ -28,32 +30,35 @@ var content embed.FS
 const SecretKey = "MySuperSecretKey1234567890123456" // 32字节密钥
 const AppName = "MyVideoPlayer"
 
-// --- Windows API 定义 (保留你原有的定义) ---
+// --- Windows API 定义 ---
 var (
-	user32                  = syscall.NewLazyDLL("user32.dll")
-	procGetWindowLong       = user32.NewProc("GetWindowLongW")
-	procSetWindowLong       = user32.NewProc("SetWindowLongW")
-	procSetWindowPos        = user32.NewProc("SetWindowPos")
-	procSendMessage         = user32.NewProc("SendMessageW")
-	procReleaseCapture      = user32.NewProc("ReleaseCapture")
-	procShowWindow          = user32.NewProc("ShowWindow")
-	procGetAsyncKeyState    = user32.NewProc("GetAsyncKeyState")
-	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
+	user32                    = syscall.NewLazyDLL("user32.dll")
+	dwmapi                    = syscall.NewLazyDLL("dwmapi.dll") // ✅ 新增：用于修改标题栏颜色
+	procGetWindowLong         = user32.NewProc("GetWindowLongW")
+	procSetWindowLong         = user32.NewProc("SetWindowLongW")
+	procSetWindowPos          = user32.NewProc("SetWindowPos")
+	procSendMessage           = user32.NewProc("SendMessageW")
+	procReleaseCapture        = user32.NewProc("ReleaseCapture")
+	procShowWindow            = user32.NewProc("ShowWindow")
+	procGetAsyncKeyState      = user32.NewProc("GetAsyncKeyState")
+	procSetForegroundWindow   = user32.NewProc("SetForegroundWindow")
+	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute") // ✅ 新增
 )
 
 const (
-	GWL_STYLE        = -16
-	WS_CAPTION       = 0x00C00000
-	WS_THICKFRAME    = 0x00040000
-	SWP_FRAMECHANGED = 0x0020
-	WM_SYSCOMMAND    = 0x0112
-	SC_MINIMIZE      = 0xF020
-	SC_DRAG_MOVE     = 0xF012
-	SW_HIDE          = 0
-	SW_SHOW          = 5
-	SW_RESTORE       = 9
-	VK_MENU          = 0x12 // Alt
-	VK_Q             = 0x51 // Q
+	GWL_STYLE           = -16
+	WS_CAPTION          = 0x00C00000
+	WS_THICKFRAME       = 0x00040000
+	SWP_FRAMECHANGED    = 0x0020
+	WM_SYSCOMMAND       = 0x0112
+	SC_MINIMIZE         = 0xF020
+	SC_DRAG_MOVE        = 0xF012
+	SW_HIDE             = 0
+	SW_SHOW             = 5
+	SW_RESTORE          = 9
+	VK_MENU             = 0x12
+	VK_Q                = 0x51
+	DWMWA_CAPTION_COLOR = 35 // ✅ Windows 11 标题栏颜色属性
 )
 
 // --- 激活模块工具函数 ---
@@ -116,7 +121,6 @@ func verifyLicense(licenseCode string) (time.Time, bool) {
 	if err != nil {
 		return time.Time{}, false
 	}
-	// 允许当天有效 (比较时加上24小时缓冲)
 	if time.Now().Before(expireTime.Add(24 * time.Hour)) {
 		return expireTime, true
 	}
@@ -158,7 +162,7 @@ func (l *LicenseAPI) Activate(code string) map[string]interface{} {
 	return map[string]interface{}{"success": false, "msg": "激活码无效"}
 }
 
-// --- 播放器桥接 (保留你原有的所有方法) ---
+// --- 播放器桥接 ---
 type PlayerBridge struct {
 	w         webview.WebView
 	isVisible bool
@@ -204,6 +208,26 @@ func (p *PlayerBridge) SetAlwaysOnTop(isTop bool) {
 	procSetWindowPos.Call(uintptr(hwnd), uintptr(targetOrder), 0, 0, 0, 0, 0x0003)
 }
 
+// ✅ 新增：设置原生标题栏颜色 (Windows 11 特性)
+func (p *PlayerBridge) SetTitleColor(hex string) {
+	hwnd := p.w.Window()
+	// 解析 Hex (#RRGGBB) 到 COLORREF (0x00BBGGRR)
+	hex = strings.TrimPrefix(hex, "#")
+	v, err := strconv.ParseUint(hex, 16, 32)
+	if err != nil {
+		return
+	}
+	// Windows COLORREF 格式是 BGR
+	r := uint32(v>>16) & 0xFF
+	g := uint32(v>>8) & 0xFF
+	b := uint32(v) & 0xFF
+	color := r | (g << 8) | (b << 16)
+
+	ptr := uintptr(unsafe.Pointer(&color))
+	// 调用 DwmSetWindowAttribute 修改标题栏颜色
+	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_CAPTION_COLOR), ptr, 4)
+}
+
 func (p *PlayerBridge) ToggleMode(isMini bool) {
 	if isMini {
 		p.setFrameless(true)
@@ -233,7 +257,6 @@ func (p *PlayerBridge) Log(msg string) { fmt.Println("Frontend:", msg) }
 
 // --- 主程序 ---
 func main() {
-	// 1. 生成模式检测 (必须放在最前面)
 	if len(os.Args) == 3 && os.Args[1] == "-gen" {
 		days := 365
 		fmt.Sscanf(os.Args[2], "%d", &days)
@@ -241,13 +264,11 @@ func main() {
 		if err != nil {
 			fmt.Println("Error:", err)
 		} else {
-			// 确保有输出
 			fmt.Printf("\n--- 激活码 (有效期 %d 天) ---\n%s\n--------------------------\n", days, code)
 		}
-		return // 生成完直接退出
+		return
 	}
 
-	// 2. 启动文件服务
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		log.Fatal(err)
@@ -258,17 +279,14 @@ func main() {
 	go func() { http.Serve(listener, fileHandler) }()
 	fmt.Printf("Server started at http://127.0.0.1:%d\n", port)
 
-	// 3. 启动 WebView
 	w := webview.New(true)
 	defer w.Destroy()
 	w.SetTitle("邮箱助手")
 	w.SetSize(800, 600, webview.HintNone)
 
-	// 4. 绑定功能
 	bridge := &PlayerBridge{w: w, isVisible: true}
 	licApi := &LicenseAPI{}
 
-	// 绑定你的原有功能
 	w.Bind("toggleMode", bridge.ToggleMode)
 	w.Bind("goLog", bridge.Log)
 	w.Bind("winMin", bridge.WinMin)
@@ -276,17 +294,15 @@ func main() {
 	w.Bind("setTop", bridge.SetAlwaysOnTop)
 	w.Bind("winMove", bridge.WinMove)
 	w.Bind("bossKey", bridge.ToggleVisibility)
-
-	// 绑定新增加的激活功能
 	w.Bind("checkLicense", licApi.CheckSavedLicense)
 	w.Bind("activate", licApi.Activate)
+	// ✅ 新增绑定
+	w.Bind("setTitleColor", bridge.SetTitleColor)
 
-	// 5. 加载 HTML
 	htmlContent, _ := content.ReadFile("index.html")
 	finalHTML := strings.Replace(string(htmlContent), "{{PORT}}", fmt.Sprintf("%d", port), -1)
 	w.SetHtml(finalHTML)
 
-	// 6. 启动老板键监控协程
 	go func() {
 		for {
 			time.Sleep(50 * time.Millisecond)

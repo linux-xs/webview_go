@@ -12,73 +12,62 @@
             outline: none;
         }
         
-        /* --- 核心容器 --- */
         .content-container {
             flex: 1; width: 100%; height: 100%; position: relative; overflow: hidden;
             display: flex; justify-content: center; align-items: center;
         }
+        /* 全局隐藏图片，但在下面单独为二维码开启显示 */
         video, img, iframe { width: 100%; height: 100%; display: none; border: none; object-fit: contain; }
         .active { display: block !important; }
 
-        /* --- 顶部感应区域 --- */
         .top-hover-zone {
             position: absolute; top: 0; left: 0; width: 100%; 
-            height: 30%; /* 保证在迷你模式下也能容易触发 */
-            min-height: 40px; 
-            z-index: 200;
+            height: 30%; min-height: 40px; z-index: 200;
             display: flex; flex-direction: column;
         }
         .top-hover-zone:hover .controls { opacity: 1; transform: translateY(0); }
 
-        /* --- 控制条容器 --- */
         .controls {
             width: 100%; height: auto; 
             background: rgba(0,0,0,0.85); 
             position: relative; 
             opacity: 0; transform: translateY(-100%); transition: all 0.3s ease;
-            
-            /* ✅ 修改这里：最小字号改为 4px，最大 16px */
-            /* 界面所有元素大小都会随这个字体大小自动缩放 */
             font-size: clamp(4px, 3vw, 16px);
         }
 
-        /* --- 拖动层 (底层) --- */
         .drag-layer {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             -webkit-app-region: drag; 
             z-index: 0; 
         }
 
-        /* --- 按钮层 (上层) --- */
         .control-items {
             position: relative; z-index: 10; 
             display: flex; align-items: center; 
-            padding: 0.5em 0.6em; /* 间距也会随字号缩小 */
+            padding: 0.5em 0.6em; 
             box-sizing: border-box; width: 100%;
             pointer-events: none; 
         }
 
-        /* 让按钮恢复点击 */
         .control-items > * {
             pointer-events: auto; 
             -webkit-app-region: no-drag; 
         }
 
-        /* --- 控件样式 --- */
-        input { 
+        input[type="text"] { 
             flex: 1; 
-            font-size: inherit; /* 继承父级大小 */
+            font-size: inherit; 
             margin-right: 0.6em; outline: none; 
             padding: 0.3em 0.5em; background: #333; color: white; border: 1px solid #555; border-radius: 0.3em;
             height: 2.2em; 
         }
         
         button, .btn-move { 
-            font-size: inherit; /* 继承父级大小 */
+            font-size: inherit; 
             cursor: pointer; margin-right: 0.4em; padding: 0;
             background: #444; color: white; border: 1px solid #666; border-radius: 0.3em;
             display: flex; align-items: center; justify-content: center;
-            width: 2.2em; height: 2.2em; /* 宽高随字体自动缩放 */
+            width: 2.2em; height: 2.2em; 
             box-sizing: border-box;
         }
         
@@ -93,16 +82,18 @@
         .btn-close { background: #c00; border-color: #a00; }
         .btn-close:hover { background: #f00; }
 
-        /* --- 模式切换逻辑 --- */
         .only-mini { display: none; } 
         
+        /* 迷你模式样式调整 */
         .controls.mini .control-items { justify-content: center; gap: 0.4em; }
-        .controls.mini input { display: none; }
+        .controls.mini input[type="text"] { display: none; }
+        
+        /* ✅ 关键：迷你模式下隐藏调色板按钮 */
+        .controls.mini #btnColor { display: none; }
+        
         .controls.mini .only-mini { display: flex; } 
         .controls.mini button, .controls.mini .btn-move { margin-right: 0; } 
 
-
-        /* --- 激活遮罩层 --- */
         #login-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
             background: #1a1a1a; z-index: 10000;
@@ -117,6 +108,14 @@
         .login-box button { width: 100%; background: #2ea44f; border: none; padding: 10px; font-weight: bold; color: white; cursor: pointer; font-size: 16px;}
         #act-msg { margin-top: 15px; font-size: 12px; min-height: 1.5em; color: #ff5555; }
 
+        .contact-qr {
+            margin-top: 25px; text-align: center; border-top: 1px solid #444; padding-top: 15px;
+        }
+        .contact-qr p { font-size: 14px; color: #aaa; margin: 0 0 10px 0; }
+        .contact-qr img {
+            width: 120px; height: 120px; border-radius: 4px; background: #fff; padding: 5px;
+            display: block; margin: 0 auto; 
+        }
     </style>
 </head>
 <body tabindex="0">
@@ -127,16 +126,22 @@
             <input type="text" id="license-input" placeholder="输入 License Key" autocomplete="off">
             <button onclick="tryActivate()">立即激活</button>
             <p id="act-msg"></p>
+            <div class="contact-qr">
+                <p>扫码联系客服 / 购买激活码</p>
+                <img id="qr-img" alt="客服二维码">
+            </div>
         </div>
     </div>
 
     <div class="top-hover-zone">
         <div class="controls" id="ctrlBar">
             <div class="drag-layer"></div>
-
             <div class="control-items">
                 <input type="text" id="urlInput" placeholder="支持 视频 / 图片 / PDF 拖拽">
                 
+                <input type="color" id="colorPicker" style="display:none" onchange="submitColor()">
+                <button id="btnColor" onclick="openPicker()" title="设置标题栏颜色">🎨</button>
+
                 <button id="btnBoss" onclick="clickBtn(toggleBoss)" title="老板键 (Alt+Q)">👻</button>
                 <button id="btnTop" onclick="clickBtn(toggleTop)" title="置顶">📌</button>
                 <button onclick="clickBtn(playMedia)" title="播放/刷新">▶</button>
@@ -165,15 +170,26 @@
         const overlay = document.getElementById('login-overlay');
         const actMsg = document.getElementById('act-msg');
         
+        const qrImg = document.getElementById('qr-img');
+        if (qrImg) { qrImg.src = `http://127.0.0.1:${PORT}/images.png`; }
+
         let isMini = false;
         let isTop = false;
         let hls = null;
         let currentType = 'video';
 
-        // --- 按钮点击处理 (焦点修复) ---
+        // ✅ 新增：颜色处理逻辑
+        function openPicker() { document.getElementById('colorPicker').click(); }
+        function submitColor() {
+            const hex = document.getElementById('colorPicker').value;
+            // 调用后端 Go 函数修改颜色
+            if(window.setTitleColor) window.setTitleColor(hex);
+            // 恢复焦点，避免空格键失效
+            setTimeout(() => { document.body.focus(); }, 50);
+        }
+
         function clickBtn(fn) {
             if (typeof fn === 'function') fn();
-            // 点击后强制让按钮失去焦点，防止占有空格键
             setTimeout(() => {
                 if (document.activeElement) document.activeElement.blur();
                 document.body.focus();
@@ -181,7 +197,6 @@
             }, 50);
         }
 
-        // 后端函数包装
         function doMin() { if(window.winMin) window.winMin(); }
         function doClose() { if(window.winClose) window.winClose(); }
         function startDrag() { if(window.winMove) window.winMove(); }
@@ -205,18 +220,13 @@
             btn.style.borderColor = isTop ? '#2ea44f' : '#666';
         }
 
-        // --- 激活逻辑 ---
         window.onload = async () => {
             document.body.focus();
             if (window.checkLicense) {
                 try {
                     const status = await window.checkLicense();
-                    if (status.valid) {
-                        overlay.style.display = 'none';
-                        console.log(status.msg);
-                    } else {
-                        actMsg.innerText = status.msg;
-                    }
+                    if (status.valid) { overlay.style.display = 'none'; console.log(status.msg); } 
+                    else { actMsg.innerText = status.msg; }
                 } catch (e) { console.error(e); }
             }
         };
@@ -228,17 +238,12 @@
             try {
                 const res = await window.activate(code);
                 if (res.success) {
-                    actMsg.style.color = "#4caf50";
-                    actMsg.innerText = res.msg;
+                    actMsg.style.color = "#4caf50"; actMsg.innerText = res.msg;
                     setTimeout(() => { overlay.style.display = 'none'; }, 1000);
-                } else {
-                    actMsg.style.color = "#ff5555";
-                    actMsg.innerText = res.msg;
-                }
+                } else { actMsg.style.color = "#ff5555"; actMsg.innerText = res.msg; }
             } catch (e) { actMsg.innerText = "接口错误"; }
         }
 
-        // --- 媒体逻辑 ---
         function playMedia() {
             let val = input.value;
             if (!val) return;
@@ -249,99 +254,25 @@
         }
 
         function loadResource(src) {
-            video.pause();
-            video.classList.remove('active');
-            img.classList.remove('active');
-            pdf.classList.remove('active');
-            
+            video.pause(); video.classList.remove('active'); img.classList.remove('active'); pdf.classList.remove('active');
             const cleanSrc = src.split('?')[0].toLowerCase();
-            
-            if (cleanSrc.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) {
-                currentType = 'image';
-                img.src = src;
-                img.classList.add('active');
-            } else if (cleanSrc.endsWith('.pdf')) {
-                currentType = 'pdf';
-                pdf.src = src;
-                pdf.classList.add('active');
-            } else {
-                currentType = 'video';
-                video.classList.add('active');
-                if (hls) { hls.destroy(); hls = null; }
-                if (cleanSrc.includes('.m3u8')) {
-                    if (Hls.isSupported()) {
-                        hls = new Hls();
-                        hls.loadSource(src);
-                        hls.attachMedia(video);
-                        hls.on(Hls.Events.MANIFEST_PARSED, function() { video.play(); });
-                    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                        video.src = src;
-                        video.addEventListener('loadedmetadata', function() { video.play(); });
-                    }
-                } else {
-                    video.src = src;
-                    video.play();
-                }
-            }
+            if (cleanSrc.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) { currentType = 'image'; img.src = src; img.classList.add('active'); } 
+            else if (cleanSrc.endsWith('.pdf')) { currentType = 'pdf'; pdf.src = src; pdf.classList.add('active'); } 
+            else { currentType = 'video'; video.classList.add('active'); if (hls) { hls.destroy(); hls = null; } if (cleanSrc.includes('.m3u8')) { if (Hls.isSupported()) { hls = new Hls(); hls.loadSource(src); hls.attachMedia(video); hls.on(Hls.Events.MANIFEST_PARSED, function() { video.play(); }); } else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = src; video.addEventListener('loadedmetadata', function() { video.play(); }); } } else { video.src = src; video.play(); } }
         }
 
-        // --- 快捷键监听 ---
         window.addEventListener('keydown', (e) => {
             if (document.activeElement.tagName === 'INPUT') return;
-
             switch (e.code) {
-                case 'Space': 
-                    e.preventDefault(); 
-                    if (currentType === 'video') {
-                        video.paused ? video.play() : video.pause();
-                    }
-                    break;
-                case 'ArrowRight': 
-                    if (currentType === 'video') {
-                        video.currentTime = Math.min(video.duration, video.currentTime + 5);
-                    }
-                    break;
-                case 'ArrowLeft': 
-                    if (currentType === 'video') {
-                        video.currentTime = Math.max(0, video.currentTime - 5);
-                    }
-                    break;
+                case 'Space': e.preventDefault(); if (currentType === 'video') { video.paused ? video.play() : video.pause(); } break;
+                case 'ArrowRight': if (currentType === 'video') { video.currentTime = Math.min(video.duration, video.currentTime + 5); } break;
+                case 'ArrowLeft': if (currentType === 'video') { video.currentTime = Math.max(0, video.currentTime - 5); } break;
             }
         });
-
-        // 鼠标点击归还焦点
-        document.addEventListener('mousedown', (e) => {
-            if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') {
-                 setTimeout(() => { document.body.focus(); }, 10);
-            }
-        });
-
+        document.addEventListener('mousedown', (e) => { if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') { setTimeout(() => { document.body.focus(); }, 10); } });
         document.body.addEventListener('dragover', e => e.preventDefault());
-        document.body.addEventListener('drop', e => {
-            e.preventDefault();
-            if (e.dataTransfer.files.length > 0) {
-                const file = e.dataTransfer.files[0];
-                const localUrl = URL.createObjectURL(file);
-                input.value = file.name;
-                
-                const type = file.type;
-                if (type.startsWith('image/')) {
-                    loadResource(localUrl);
-                } else if (type === 'application/pdf') {
-                    loadResource(localUrl);
-                } else {
-                    loadResource(localUrl);
-                }
-            }
-        });
-        
-        document.body.addEventListener('dblclick', (e) => {
-            if(e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
-            if(e.target.closest('.controls')) return; 
-            if (currentType === 'video') {
-                video.paused ? video.play() : video.pause();
-            }
-        });
+        document.body.addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer.files.length > 0) { const file = e.dataTransfer.files[0]; const localUrl = URL.createObjectURL(file); input.value = file.name; const type = file.type; if (type.startsWith('image/')) { loadResource(localUrl); } else if (type === 'application/pdf') { loadResource(localUrl); } else { loadResource(localUrl); } } });
+        document.body.addEventListener('dblclick', (e) => { if(e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return; if(e.target.closest('.controls')) return; if (currentType === 'video') { video.paused ? video.play() : video.pause(); } });
     </script>
 </body>
 </html>
