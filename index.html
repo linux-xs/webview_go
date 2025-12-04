@@ -4,7 +4,13 @@
     <meta charset="UTF-8">
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; display: flex; flex-direction: column; height: 100vh; font-family: "Microsoft YaHei", sans-serif;}
+        body { 
+            margin: 0; background: #000; overflow: hidden; 
+            display: flex; flex-direction: column; height: 100vh; 
+            font-family: "Microsoft YaHei", sans-serif; 
+            user-select: none; 
+            outline: none;
+        }
         
         /* --- 核心容器 --- */
         .content-container {
@@ -16,66 +22,104 @@
 
         /* --- 顶部感应区域 --- */
         .top-hover-zone {
-            position: absolute; top: 0; left: 0; width: 100%; height: 80px; z-index: 200;
+            position: absolute; top: 0; left: 0; width: 100%; 
+            height: 30%; /* 保证在迷你模式下也能容易触发 */
+            min-height: 40px; 
+            z-index: 200;
             display: flex; flex-direction: column;
         }
-        .controls {
-            width: 100%; background: rgba(0,0,0,0.85); display: flex; align-items: center; 
-            box-sizing: border-box; font-size: clamp(6px, 2vw, 16px); padding: 0.5em 0.6em; 
-            opacity: 0; transform: translateY(-100%); transition: all 0.3s ease; -webkit-app-region: drag; 
-        }
         .top-hover-zone:hover .controls { opacity: 1; transform: translateY(0); }
-        .controls.mini input { display: none !important; }
-        .controls.mini { justify-content: center; gap: 0.6em; }
-        
-        /* 控件样式 */
-        input { 
-            flex: 1; font-size: 1em; margin-right: 0.6em; outline: none; 
-            padding: 0.3em 0.5em; background: #333; color: white; border: 1px solid #555; border-radius: 0.3em;
+
+        /* --- 控制条容器 --- */
+        .controls {
+            width: 100%; height: auto; 
+            background: rgba(0,0,0,0.85); 
+            position: relative; 
+            opacity: 0; transform: translateY(-100%); transition: all 0.3s ease;
+            
+            /* ✅ 修改这里：最小字号改为 4px，最大 16px */
+            /* 界面所有元素大小都会随这个字体大小自动缩放 */
+            font-size: clamp(4px, 3vw, 16px);
+        }
+
+        /* --- 拖动层 (底层) --- */
+        .drag-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            -webkit-app-region: drag; 
+            z-index: 0; 
+        }
+
+        /* --- 按钮层 (上层) --- */
+        .control-items {
+            position: relative; z-index: 10; 
+            display: flex; align-items: center; 
+            padding: 0.5em 0.6em; /* 间距也会随字号缩小 */
+            box-sizing: border-box; width: 100%;
+            pointer-events: none; 
+        }
+
+        /* 让按钮恢复点击 */
+        .control-items > * {
+            pointer-events: auto; 
             -webkit-app-region: no-drag; 
         }
-        button { 
-            font-size: 1em; cursor: pointer; margin-right: 0; padding: 0.3em 0.5em; 
-            background: #444; color: white; border: 1px solid #666; border-radius: 0.3em;
-            -webkit-app-region: no-drag; display: flex; align-items: center; justify-content: center;
-            min-width: 2em; height: 2em; 
+
+        /* --- 控件样式 --- */
+        input { 
+            flex: 1; 
+            font-size: inherit; /* 继承父级大小 */
+            margin-right: 0.6em; outline: none; 
+            padding: 0.3em 0.5em; background: #333; color: white; border: 1px solid #555; border-radius: 0.3em;
+            height: 2.2em; 
         }
+        
+        button, .btn-move { 
+            font-size: inherit; /* 继承父级大小 */
+            cursor: pointer; margin-right: 0.4em; padding: 0;
+            background: #444; color: white; border: 1px solid #666; border-radius: 0.3em;
+            display: flex; align-items: center; justify-content: center;
+            width: 2.2em; height: 2.2em; /* 宽高随字体自动缩放 */
+            box-sizing: border-box;
+        }
+        
         button:hover { background: #666; }
+        
         #btnBoss { color: #aaa; border-color: #888; }
         #btnBoss:hover { color: #fff; background: #666; }
-        .controls > * { margin-right: 0.4em; }
-        .controls.mini > * { margin-right: 0; } 
-        .btn-move {
-            -webkit-app-region: no-drag; display: inline-flex; justify-content: center; align-items: center; 
-            box-sizing: border-box; width: 2em; height: 2em; font-size: 1em; cursor: move; 
-            background: #2b5c82; color: white; border: 1px solid #3e7ca8; border-radius: 0.3em;
-            -webkit-user-select: none; user-select: none;
-        }
+        
+        .btn-move { cursor: move; background: #2b5c82; border: 1px solid #3e7ca8; }
         .btn-move:hover { background: #3e7ca8; }
-        #btnTop { font-size: 1em; padding: 0.3em 0.5em; }
-        .win-controls { display: flex; align-items: center; gap: 0.4em; margin-left: auto; }
-        .controls.mini .win-controls { margin-left: 0; }
+        
         .btn-close { background: #c00; border-color: #a00; }
+        .btn-close:hover { background: #f00; }
 
-        /* --- 新增：激活遮罩层 --- */
+        /* --- 模式切换逻辑 --- */
+        .only-mini { display: none; } 
+        
+        .controls.mini .control-items { justify-content: center; gap: 0.4em; }
+        .controls.mini input { display: none; }
+        .controls.mini .only-mini { display: flex; } 
+        .controls.mini button, .controls.mini .btn-move { margin-right: 0; } 
+
+
+        /* --- 激活遮罩层 --- */
         #login-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
             background: #1a1a1a; z-index: 10000;
             display: flex; flex-direction: column; justify-content: center; align-items: center; 
+            -webkit-app-region: no-drag; 
         }
         .login-box {
             background: #2a2a2a; padding: 30px; border-radius: 8px; width: 320px; text-align: center;
             box-shadow: 0 10px 25px rgba(0,0,0,0.5); color: #fff;
         }
-        .login-box h2 { margin-top: 0; margin-bottom: 20px; }
-        .login-box input { width: 100%; margin-bottom: 15px; box-sizing: border-box; background: #fff; color: #000; border: none; padding: 10px; }
-        .login-box button { width: 100%; background: #2ea44f; border: none; padding: 10px; font-weight: bold; color: white; cursor: pointer; }
-        .login-box button:hover { background: #2c974b; }
+        .login-box input { width: 100%; margin-bottom: 15px; box-sizing: border-box; background: #fff; color: #000; border: none; padding: 10px; font-size: 16px;}
+        .login-box button { width: 100%; background: #2ea44f; border: none; padding: 10px; font-weight: bold; color: white; cursor: pointer; font-size: 16px;}
         #act-msg { margin-top: 15px; font-size: 12px; min-height: 1.5em; color: #ff5555; }
 
     </style>
 </head>
-<body>
+<body tabindex="0">
     
     <div id="login-overlay">
         <div class="login-box">
@@ -88,17 +132,19 @@
 
     <div class="top-hover-zone">
         <div class="controls" id="ctrlBar">
-            <input type="text" id="urlInput" placeholder="支持 视频 / 图片 / PDF 拖拽">
-            
-            <button id="btnBoss" onclick="toggleBoss()" title="老板键 (Alt+Q)">👻</button>
-            <button id="btnTop" onclick="toggleTop()" title="置顶">📌</button>
-            <button onclick="playMedia()" title="播放/刷新">▶</button>
-            <button onclick="toggleSize()" title="切换模式">📺</button>
-            
-            <div class="win-controls" id="winBtns" style="display:none;">
-                <div class="btn-move" onmousedown="startDrag()" title="拖动">✥</div>
-                <button onclick="winMin()">-</button>
-                <button class="btn-close" onclick="winClose()">×</button>
+            <div class="drag-layer"></div>
+
+            <div class="control-items">
+                <input type="text" id="urlInput" placeholder="支持 视频 / 图片 / PDF 拖拽">
+                
+                <button id="btnBoss" onclick="clickBtn(toggleBoss)" title="老板键 (Alt+Q)">👻</button>
+                <button id="btnTop" onclick="clickBtn(toggleTop)" title="置顶">📌</button>
+                <button onclick="clickBtn(playMedia)" title="播放/刷新">▶</button>
+                <button onclick="clickBtn(toggleSize)" title="切换模式">📺</button>
+                
+                <div class="btn-move only-mini" onmousedown="startDrag()" title="拖动">✥</div>
+                <button class="only-mini" onclick="clickBtn(doMin)" title="最小化">-</button>
+                <button class="btn-close only-mini" onclick="clickBtn(doClose)" title="关闭">×</button>
             </div>
         </div>
     </div>
@@ -115,7 +161,6 @@
         const img = document.getElementById('imgViewer');
         const pdf = document.getElementById('pdfViewer');
         const input = document.getElementById('urlInput');
-        const winBtns = document.getElementById('winBtns');
         const ctrlBar = document.getElementById('ctrlBar');
         const overlay = document.getElementById('login-overlay');
         const actMsg = document.getElementById('act-msg');
@@ -125,14 +170,49 @@
         let hls = null;
         let currentType = 'video';
 
+        // --- 按钮点击处理 (焦点修复) ---
+        function clickBtn(fn) {
+            if (typeof fn === 'function') fn();
+            // 点击后强制让按钮失去焦点，防止占有空格键
+            setTimeout(() => {
+                if (document.activeElement) document.activeElement.blur();
+                document.body.focus();
+                window.focus();
+            }, 50);
+        }
+
+        // 后端函数包装
+        function doMin() { if(window.winMin) window.winMin(); }
+        function doClose() { if(window.winClose) window.winClose(); }
+        function startDrag() { if(window.winMove) window.winMove(); }
+        function toggleBoss() { if(window.bossKey) window.bossKey(); }
+        
+        function toggleSize() {
+            isMini = !isMini;
+            if(window.toggleMode) window.toggleMode(isMini);
+            if(isMini) {
+                ctrlBar.classList.add('mini');
+            } else {
+                ctrlBar.classList.remove('mini');
+            }
+        }
+        
+        function toggleTop() {
+            isTop = !isTop;
+            if(window.setTop) window.setTop(isTop);
+            const btn = document.getElementById('btnTop');
+            btn.style.background = isTop ? '#2ea44f' : '#444';
+            btn.style.borderColor = isTop ? '#2ea44f' : '#666';
+        }
+
         // --- 激活逻辑 ---
         window.onload = async () => {
-            // 页面加载时检查激活状态
+            document.body.focus();
             if (window.checkLicense) {
                 try {
                     const status = await window.checkLicense();
                     if (status.valid) {
-                        overlay.style.display = 'none'; // 已激活，隐藏遮罩
+                        overlay.style.display = 'none';
                         console.log(status.msg);
                     } else {
                         actMsg.innerText = status.msg;
@@ -158,10 +238,7 @@
             } catch (e) { actMsg.innerText = "接口错误"; }
         }
 
-        // --- 原有功能逻辑 ---
-
-        function playInput() { playMedia(); }
-        
+        // --- 媒体逻辑 ---
         function playMedia() {
             let val = input.value;
             if (!val) return;
@@ -208,35 +285,36 @@
             }
         }
 
-        function startDrag() { if(window.winMove) window.winMove(); }
-        function winMin() { if(window.winMin) window.winMin(); }
-        function winClose() { if(window.winClose) window.winClose(); }
-        function toggleBoss() { if(window.bossKey) window.bossKey(); }
+        // --- 快捷键监听 ---
+        window.addEventListener('keydown', (e) => {
+            if (document.activeElement.tagName === 'INPUT') return;
 
-        function toggleSize() {
-            isMini = !isMini;
-            if(window.toggleMode) window.toggleMode(isMini);
-            if(isMini) {
-                ctrlBar.classList.add('mini');
-                winBtns.style.display = 'flex';
-                document.querySelector('.top-hover-zone').style.height = '100%'; 
-            } else {
-                ctrlBar.classList.remove('mini');
-                winBtns.style.display = 'none';
-                document.querySelector('.top-hover-zone').style.height = '80px';
+            switch (e.code) {
+                case 'Space': 
+                    e.preventDefault(); 
+                    if (currentType === 'video') {
+                        video.paused ? video.play() : video.pause();
+                    }
+                    break;
+                case 'ArrowRight': 
+                    if (currentType === 'video') {
+                        video.currentTime = Math.min(video.duration, video.currentTime + 5);
+                    }
+                    break;
+                case 'ArrowLeft': 
+                    if (currentType === 'video') {
+                        video.currentTime = Math.max(0, video.currentTime - 5);
+                    }
+                    break;
             }
-        }
+        });
 
-        function toggleTop() {
-            isTop = !isTop;
-            if(window.setTop) window.setTop(isTop);
-            const btn = document.getElementById('btnTop');
-            if (isTop) {
-                btn.style.background = '#2ea44f'; btn.style.borderColor = '#2ea44f';
-            } else {
-                btn.style.background = '#444'; btn.style.borderColor = '#666';
+        // 鼠标点击归还焦点
+        document.addEventListener('mousedown', (e) => {
+            if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') {
+                 setTimeout(() => { document.body.focus(); }, 10);
             }
-        }
+        });
 
         document.body.addEventListener('dragover', e => e.preventDefault());
         document.body.addEventListener('drop', e => {
@@ -244,33 +322,24 @@
             if (e.dataTransfer.files.length > 0) {
                 const file = e.dataTransfer.files[0];
                 const localUrl = URL.createObjectURL(file);
-                const type = file.type;
+                input.value = file.name;
                 
-                video.pause();
-                video.classList.remove('active');
-                img.classList.remove('active');
-                pdf.classList.remove('active');
-
+                const type = file.type;
                 if (type.startsWith('image/')) {
-                    img.src = localUrl;
-                    img.classList.add('active');
+                    loadResource(localUrl);
                 } else if (type === 'application/pdf') {
-                    pdf.src = localUrl;
-                    pdf.classList.add('active');
+                    loadResource(localUrl);
                 } else {
-                    video.classList.add('active');
                     loadResource(localUrl);
                 }
-                input.value = file.name;
             }
         });
         
         document.body.addEventListener('dblclick', (e) => {
             if(e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
-            if(e.target.classList.contains('btn-move')) return; 
             if(e.target.closest('.controls')) return; 
             if (currentType === 'video') {
-                if(video.paused) video.play(); else video.pause();
+                video.paused ? video.play() : video.pause();
             }
         });
     </script>
