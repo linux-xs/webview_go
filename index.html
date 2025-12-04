@@ -4,32 +4,14 @@
     <meta charset="UTF-8">
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
+        body { margin: 0; background: #000; overflow: hidden; display: flex; flex-direction: column; height: 100vh; font-family: "Microsoft YaHei", sans-serif;}
         
-        /* --- 核心容器：所有内容都铺满全屏 --- */
+        /* --- 核心容器 --- */
         .content-container {
-            flex: 1; /* 占据剩余空间 */
-            width: 100%;
-            height: 100%;
-            position: relative;
-            overflow: hidden;
-            display: flex; 
-            justify-content: center; 
-            align-items: center;
+            flex: 1; width: 100%; height: 100%; position: relative; overflow: hidden;
+            display: flex; justify-content: center; align-items: center;
         }
-
-        /* 视频、图片、PDF 默认隐藏 */
-        video, img, iframe { 
-            width: 100%; 
-            height: 100%; 
-            display: none; /* 默认隐藏 */
-            border: none;
-        }
-        
-        /* 视频和图片保持比例 */
-        video, img { object-fit: contain; }
-        
-        /* 激活状态 */
+        video, img, iframe { width: 100%; height: 100%; display: none; border: none; object-fit: contain; }
         .active { display: block !important; }
 
         /* --- 顶部感应区域 --- */
@@ -37,66 +19,73 @@
             position: absolute; top: 0; left: 0; width: 100%; height: 80px; z-index: 200;
             display: flex; flex-direction: column;
         }
-
-        /* --- 控制栏 --- */
         .controls {
-            width: 100%;
-            background: rgba(0,0,0,0.85);
-            display: flex; align-items: center; 
-            box-sizing: border-box;
-            font-size: clamp(6px, 2vw, 16px); 
-            padding: 0.5em 0.6em; 
-            opacity: 0; transform: translateY(-100%); transition: all 0.3s ease;
-            -webkit-app-region: drag; 
+            width: 100%; background: rgba(0,0,0,0.85); display: flex; align-items: center; 
+            box-sizing: border-box; font-size: clamp(6px, 2vw, 16px); padding: 0.5em 0.6em; 
+            opacity: 0; transform: translateY(-100%); transition: all 0.3s ease; -webkit-app-region: drag; 
         }
-
         .top-hover-zone:hover .controls { opacity: 1; transform: translateY(0); }
-        
         .controls.mini input { display: none !important; }
         .controls.mini { justify-content: center; gap: 0.6em; }
         
         /* 控件样式 */
         input { 
             flex: 1; font-size: 1em; margin-right: 0.6em; outline: none; 
-            padding: 0.3em 0.5em; 
-            background: #333; color: white; border: 1px solid #555; border-radius: 0.3em;
+            padding: 0.3em 0.5em; background: #333; color: white; border: 1px solid #555; border-radius: 0.3em;
             -webkit-app-region: no-drag; 
         }
-        
         button { 
-            font-size: 1em; cursor: pointer; margin-right: 0; 
-            padding: 0.3em 0.5em; 
+            font-size: 1em; cursor: pointer; margin-right: 0; padding: 0.3em 0.5em; 
             background: #444; color: white; border: 1px solid #666; border-radius: 0.3em;
-            -webkit-app-region: no-drag;
-            display: flex; align-items: center; justify-content: center;
+            -webkit-app-region: no-drag; display: flex; align-items: center; justify-content: center;
             min-width: 2em; height: 2em; 
         }
         button:hover { background: #666; }
-        
         #btnBoss { color: #aaa; border-color: #888; }
         #btnBoss:hover { color: #fff; background: #666; }
-
         .controls > * { margin-right: 0.4em; }
         .controls.mini > * { margin-right: 0; } 
-
         .btn-move {
-            -webkit-app-region: no-drag; 
-            display: inline-flex; justify-content: center; align-items: center; box-sizing: border-box;
-            width: 2em; height: 2em; font-size: 1em; 
-            cursor: move; 
+            -webkit-app-region: no-drag; display: inline-flex; justify-content: center; align-items: center; 
+            box-sizing: border-box; width: 2em; height: 2em; font-size: 1em; cursor: move; 
             background: #2b5c82; color: white; border: 1px solid #3e7ca8; border-radius: 0.3em;
             -webkit-user-select: none; user-select: none;
         }
         .btn-move:hover { background: #3e7ca8; }
-
         #btnTop { font-size: 1em; padding: 0.3em 0.5em; }
         .win-controls { display: flex; align-items: center; gap: 0.4em; margin-left: auto; }
         .controls.mini .win-controls { margin-left: 0; }
         .btn-close { background: #c00; border-color: #a00; }
+
+        /* --- 新增：激活遮罩层 --- */
+        #login-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: #1a1a1a; z-index: 10000;
+            display: flex; flex-direction: column; justify-content: center; align-items: center; 
+        }
+        .login-box {
+            background: #2a2a2a; padding: 30px; border-radius: 8px; width: 320px; text-align: center;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5); color: #fff;
+        }
+        .login-box h2 { margin-top: 0; margin-bottom: 20px; }
+        .login-box input { width: 100%; margin-bottom: 15px; box-sizing: border-box; background: #fff; color: #000; border: none; padding: 10px; }
+        .login-box button { width: 100%; background: #2ea44f; border: none; padding: 10px; font-weight: bold; color: white; cursor: pointer; }
+        .login-box button:hover { background: #2c974b; }
+        #act-msg { margin-top: 15px; font-size: 12px; min-height: 1.5em; color: #ff5555; }
+
     </style>
 </head>
 <body>
     
+    <div id="login-overlay">
+        <div class="login-box">
+            <h2>请输入激活码</h2>
+            <input type="text" id="license-input" placeholder="输入 License Key" autocomplete="off">
+            <button onclick="tryActivate()">立即激活</button>
+            <p id="act-msg"></p>
+        </div>
+    </div>
+
     <div class="top-hover-zone">
         <div class="controls" id="ctrlBar">
             <input type="text" id="urlInput" placeholder="支持 视频 / 图片 / PDF 拖拽">
@@ -128,57 +117,80 @@
         const input = document.getElementById('urlInput');
         const winBtns = document.getElementById('winBtns');
         const ctrlBar = document.getElementById('ctrlBar');
+        const overlay = document.getElementById('login-overlay');
+        const actMsg = document.getElementById('act-msg');
         
         let isMini = false;
         let isTop = false;
         let hls = null;
-        let currentType = 'video'; // video, image, pdf
+        let currentType = 'video';
 
-        function playInput() { playMedia(); } // 兼容旧习惯
+        // --- 激活逻辑 ---
+        window.onload = async () => {
+            // 页面加载时检查激活状态
+            if (window.checkLicense) {
+                try {
+                    const status = await window.checkLicense();
+                    if (status.valid) {
+                        overlay.style.display = 'none'; // 已激活，隐藏遮罩
+                        console.log(status.msg);
+                    } else {
+                        actMsg.innerText = status.msg;
+                    }
+                } catch (e) { console.error(e); }
+            }
+        };
+
+        async function tryActivate() {
+            const code = document.getElementById('license-input').value;
+            if(!code) return;
+            actMsg.innerText = "验证中...";
+            try {
+                const res = await window.activate(code);
+                if (res.success) {
+                    actMsg.style.color = "#4caf50";
+                    actMsg.innerText = res.msg;
+                    setTimeout(() => { overlay.style.display = 'none'; }, 1000);
+                } else {
+                    actMsg.style.color = "#ff5555";
+                    actMsg.innerText = res.msg;
+                }
+            } catch (e) { actMsg.innerText = "接口错误"; }
+        }
+
+        // --- 原有功能逻辑 ---
+
+        function playInput() { playMedia(); }
         
         function playMedia() {
             let val = input.value;
             if (!val) return;
-            // 如果不是以 http 或 blob 开头，说明是相对路径，加上本地服务前缀
             if (!val.startsWith('http') && !val.startsWith('blob:')) {
                 val = `http://127.0.0.1:${PORT}/${val}`;
             }
             loadResource(val);
         }
 
-        // 【核心修改】智能资源加载器
         function loadResource(src) {
-            // 1. 先重置所有显示
             video.pause();
             video.classList.remove('active');
             img.classList.remove('active');
             pdf.classList.remove('active');
             
-            // 简单判断文件类型（取后缀，忽略大小写，忽略查询参数）
-            // 如果是 blob: 开头的，通常是拖拽进来的，我们需要更复杂的判断，或者直接根据拖拽时的文件对象判断
-            // 这里主要处理 input 输入的 URL 字符串
-            
             const cleanSrc = src.split('?')[0].toLowerCase();
             
-            if (cleanSrc.endsWith('.jpg') || cleanSrc.endsWith('.jpeg') || cleanSrc.endsWith('.png') || cleanSrc.endsWith('.gif') || cleanSrc.endsWith('.webp') || cleanSrc.endsWith('.svg')) {
-                // --- 图片模式 ---
+            if (cleanSrc.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) {
                 currentType = 'image';
                 img.src = src;
                 img.classList.add('active');
-                
             } else if (cleanSrc.endsWith('.pdf')) {
-                // --- PDF模式 ---
                 currentType = 'pdf';
                 pdf.src = src;
                 pdf.classList.add('active');
-                
             } else {
-                // --- 默认为视频模式 ---
                 currentType = 'video';
                 video.classList.add('active');
-                
                 if (hls) { hls.destroy(); hls = null; }
-                
                 if (cleanSrc.includes('.m3u8')) {
                     if (Hls.isSupported()) {
                         hls = new Hls();
@@ -196,12 +208,14 @@
             }
         }
 
-        function startDrag() { window.winMove(); }
-        function toggleBoss() { window.bossKey(); }
+        function startDrag() { if(window.winMove) window.winMove(); }
+        function winMin() { if(window.winMin) window.winMin(); }
+        function winClose() { if(window.winClose) window.winClose(); }
+        function toggleBoss() { if(window.bossKey) window.bossKey(); }
 
         function toggleSize() {
             isMini = !isMini;
-            toggleMode(isMini); 
+            if(window.toggleMode) window.toggleMode(isMini);
             if(isMini) {
                 ctrlBar.classList.add('mini');
                 winBtns.style.display = 'flex';
@@ -215,7 +229,7 @@
 
         function toggleTop() {
             isTop = !isTop;
-            window.setTop(isTop);
+            if(window.setTop) window.setTop(isTop);
             const btn = document.getElementById('btnTop');
             if (isTop) {
                 btn.style.background = '#2ea44f'; btn.style.borderColor = '#2ea44f';
@@ -224,18 +238,14 @@
             }
         }
 
-        // 拖拽文件支持
         document.body.addEventListener('dragover', e => e.preventDefault());
         document.body.addEventListener('drop', e => {
             e.preventDefault();
             if (e.dataTransfer.files.length > 0) {
                 const file = e.dataTransfer.files[0];
                 const localUrl = URL.createObjectURL(file);
-                
-                // 拖拽时，文件对象里有 type 属性，比后缀名更准
                 const type = file.type;
                 
-                // 重置显示
                 video.pause();
                 video.classList.remove('active');
                 img.classList.remove('active');
@@ -244,17 +254,14 @@
                 if (type.startsWith('image/')) {
                     img.src = localUrl;
                     img.classList.add('active');
-                    input.value = file.name; // 显示文件名方便看
                 } else if (type === 'application/pdf') {
                     pdf.src = localUrl;
                     pdf.classList.add('active');
-                    input.value = file.name;
                 } else {
-                    // 默认当视频
                     video.classList.add('active');
-                    loadResource(localUrl); // 复用之前的视频加载逻辑
-                    input.value = file.name;
+                    loadResource(localUrl);
                 }
+                input.value = file.name;
             }
         });
         
@@ -262,8 +269,6 @@
             if(e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
             if(e.target.classList.contains('btn-move')) return; 
             if(e.target.closest('.controls')) return; 
-            
-            // 只有视频模式才响应双击暂停
             if (currentType === 'video') {
                 if(video.paused) video.play(); else video.pause();
             }
