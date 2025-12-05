@@ -4,8 +4,10 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"database/sql"
 	"embed"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -20,6 +22,7 @@ import (
 	"time"
 	"unsafe"
 
+	_ "github.com/go-sql-driver/mysql" // MySQL 驱动
 	webview "github.com/webview/webview_go"
 )
 
@@ -27,8 +30,39 @@ import (
 var content embed.FS
 
 // --- 配置区域 ---
-const SecretKey = "MySuperSecretKey1234567890123456" // 32字节密钥
-const AppName = "MyVideoPlayer"
+const (
+	SecretKey = "MySuperSecretKey1234567890123456" // 本地文件加密密钥 (32字节)
+	AppName   = "MyVideoPlayer"
+)
+
+// --- 安全配置 (防反编译混淆) ---
+
+// 混淆密钥 (必须与生成工具中的一致)
+var xorKey = []byte("MyObfuscationKey2025")
+
+// ⚠️⚠️⚠️ [重要] 请用 tool.go 生成的数组替换下面这个示例数组 ⚠️⚠️⚠️
+// 当前示例解密后是: "root:123456@tcp(127.0.0.1:3306)/test_db?charset=utf8mb4&parseTime=True&loc=Local"
+var dbDsnSecret = []byte{
+	0x2c, 0x09, 0x3f, 0x3d, 0x0a, 0x1c, 0x10, 0x06, 0x0f, 0x07,
+	0x0c, 0x1c, 0x54, 0x19, 0x06, 0x3c, 0x41, 0x08, 0x60, 0x4d,
+	0x79, 0x1f, 0x1f, 0x3a, 0x0b, 0x16, 0x19, 0x19, 0x31, 0x34,
+	0x1d, 0x0c, 0x1e, 0x63, 0x54, 0x41, 0x0b, 0x1e, 0x03, 0x1b,
+	0x7f, 0x4b, 0x7b, 0x4c, 0x54, 0x46, 0x4a, 0x59, 0x53, 0x47,
+	0x5a, 0x5f, 0x58, 0x62, 0x4a, 0x00, 0x58, 0x4a, 0x41, 0x0a,
+	0x2e, 0x11, 0x2e, 0x10, 0x15, 0x10, 0x07, 0x5e, 0x14, 0x00,
+	0x0f, 0x57, 0x03, 0x29, 0x51, 0x5f, 0x42, 0x51, 0x40, 0x46,
+	0x28, 0x2d, 0x26, 0x0f, 0x03, 0x48, 0x27, 0x11, 0x14, 0x11,
+	0x4f, 0x03, 0x01, 0x28, 0x58, 0x35, 0x5d, 0x53, 0x53, 0x59,
+}
+
+// getDSN 运行时动态解密连接字符串
+func getDSN() string {
+	result := make([]byte, len(dbDsnSecret))
+	for i, b := range dbDsnSecret {
+		result[i] = b ^ xorKey[i%len(xorKey)]
+	}
+	return string(result)
+}
 
 // --- Windows API 定义 ---
 var (
@@ -46,27 +80,31 @@ var (
 )
 
 const (
-	GWL_STYLE        = -16
-	WS_CAPTION       = 0x00C00000
-	WS_THICKFRAME    = 0x00040000
-	SWP_FRAMECHANGED = 0x0020
-	WM_SYSCOMMAND    = 0x0112
-	SC_MINIMIZE      = 0xF020
-	SC_DRAG_MOVE     = 0xF012
-	SW_HIDE          = 0
-	SW_SHOW          = 5
-	SW_RESTORE       = 9
-	VK_MENU          = 0x12
-	VK_Q             = 0x51
+	GWL_STYLE     = -16
+	WS_CAPTION    = 0x00C00000
+	WS_THICKFRAME = 0x00040000
+	WM_SYSCOMMAND = 0x0112
+	SC_MINIMIZE   = 0xF020
+	SC_DRAG_MOVE  = 0xF012
+	SW_HIDE       = 0
+	SW_RESTORE    = 9
+	VK_MENU       = 0x12
+	VK_Q          = 0x51
 
-	// ✅ DWM 属性常量 (Windows 11)
-	DWMWA_USE_IMMERSIVE_DARK_MODE = 20 // 启用深色模式支持 (Win10/11)
-	DWMWA_BORDER_COLOR            = 34 // 窗口边框颜色 (解决窄边问题)
-	DWMWA_CAPTION_COLOR           = 35 // 标题栏背景颜色
-	DWMWA_TEXT_COLOR              = 36 // 标题栏文字颜色
+	DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+	DWMWA_BORDER_COLOR            = 34
+	DWMWA_CAPTION_COLOR           = 35
+	DWMWA_TEXT_COLOR              = 36
 )
 
-// --- 激活模块工具函数 ---
+// --- 激活模块结构定义 ---
+
+// LocalLicenseData 本地缓存结构
+type LocalLicenseData struct {
+	Code       string    `json:"code"`
+	ExpireDate time.Time `json:"expire_date"`
+	LastCheck  time.Time `json:"last_check"` // 上次联网时间
+}
 
 func getLicenseFilePath() string {
 	configDir, err := os.UserConfigDir()
@@ -80,9 +118,8 @@ func getLicenseFilePath() string {
 	return filepath.Join(appDir, "license.dat")
 }
 
-func generateLicense(days int) (string, error) {
-	expireDate := time.Now().AddDate(0, 0, days)
-	expireDateStr := expireDate.Format("2006-01-02")
+// encryptData AES-GCM 加密
+func encryptData(data []byte) (string, error) {
 	block, err := aes.NewCipher([]byte(SecretKey))
 	if err != nil {
 		return "", err
@@ -95,79 +132,171 @@ func generateLicense(days int) (string, error) {
 	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", err
 	}
-	ciphertext := aesGCM.Seal(nonce, nonce, []byte(expireDateStr), nil)
+	ciphertext := aesGCM.Seal(nonce, nonce, data, nil)
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
-func verifyLicense(licenseCode string) (time.Time, bool) {
-	ciphertext, err := base64.StdEncoding.DecodeString(licenseCode)
+// decryptData AES-GCM 解密
+func decryptData(encryptedStr string) ([]byte, error) {
+	ciphertext, err := base64.StdEncoding.DecodeString(encryptedStr)
 	if err != nil {
-		return time.Time{}, false
+		return nil, err
 	}
 	block, err := aes.NewCipher([]byte(SecretKey))
 	if err != nil {
-		return time.Time{}, false
+		return nil, err
 	}
 	aesGCM, err := cipher.NewGCM(block)
 	if err != nil {
-		return time.Time{}, false
+		return nil, err
 	}
 	nonceSize := aesGCM.NonceSize()
 	if len(ciphertext) < nonceSize {
-		return time.Time{}, false
+		return nil, fmt.Errorf("ciphertext too short")
 	}
 	nonce, cipherText := ciphertext[:nonceSize], ciphertext[nonceSize:]
-	plaintext, err := aesGCM.Open(nil, nonce, cipherText, nil)
-	if err != nil {
-		return time.Time{}, false
-	}
-	expireDateStr := string(plaintext)
-	expireTime, err := time.Parse("2006-01-02", expireDateStr)
-	if err != nil {
-		return time.Time{}, false
-	}
-	if time.Now().Before(expireTime.Add(24 * time.Hour)) {
-		return expireTime, true
-	}
-	return expireTime, false
+	return aesGCM.Open(nil, nonce, cipherText, nil)
 }
 
-// --- 激活 API ---
+// checkOnlineConnect 联网校验 (核心逻辑)
+func checkOnlineConnect(code string) (time.Time, bool, string) {
+	// 使用混淆后的连接字符串连接数据库
+	db, err := sql.Open("mysql", getDSN())
+	if err != nil {
+		return time.Time{}, false, "数据库连接初始化失败"
+	}
+	defer db.Close()
+	db.SetConnMaxLifetime(10 * time.Second)
+
+	// 测试连接
+	if err := db.Ping(); err != nil {
+		return time.Time{}, false, "无法连接验证服务器，请检查网络"
+	}
+
+	var expireDate time.Time
+	var isBanned int
+
+	// 查询：只读操作
+	query := "SELECT expire_date, is_banned FROM app_licenses WHERE code = ? LIMIT 1"
+	err = db.QueryRow(query, code).Scan(&expireDate, &isBanned)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return time.Time{}, false, "激活码不存在"
+		}
+		return time.Time{}, false, "验证服务器错误"
+	}
+
+	if isBanned == 1 {
+		return time.Time{}, false, "该激活码已被封禁"
+	}
+
+	// 检查是否已过期
+	if time.Now().After(expireDate.Add(24 * time.Hour)) {
+		return expireDate, false, "激活码已过期"
+	}
+
+	return expireDate, true, "OK"
+}
+
+// saveLocalLicense 更新本地缓存
+func saveLocalLicense(code string, expireDate time.Time) error {
+	data := LocalLicenseData{
+		Code:       code,
+		ExpireDate: expireDate,
+		LastCheck:  time.Now(),
+	}
+	jsonData, _ := json.Marshal(data)
+	encrypted, err := encryptData(jsonData)
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(getLicenseFilePath(), []byte(encrypted), 0644)
+}
+
+// --- API 绑定 ---
 type LicenseAPI struct{}
 
+// CheckSavedLicense 启动时自动检查
 func (l *LicenseAPI) CheckSavedLicense() map[string]interface{} {
 	path := getLicenseFilePath()
-	data, err := ioutil.ReadFile(path)
+	fileData, err := ioutil.ReadFile(path)
 	if err != nil {
 		return map[string]interface{}{"valid": false, "msg": "请输入激活码激活软件"}
 	}
-	code := string(data)
-	expDate, valid := verifyLicense(code)
-	if valid {
-		daysLeft := int(time.Until(expDate.Add(24*time.Hour)).Hours() / 24)
+
+	// 1. 解密
+	decryptedJson, err := decryptData(string(fileData))
+	if err != nil {
+		return map[string]interface{}{"valid": false, "msg": "授权文件损坏，请重新激活"}
+	}
+
+	var licData LocalLicenseData
+	if err := json.Unmarshal(decryptedJson, &licData); err != nil {
+		return map[string]interface{}{"valid": false, "msg": "授权数据错误"}
+	}
+
+	// 2. 检查缓存是否在 24 小时内
+	// 逻辑：如果 (上次检查时间 + 24小时) 晚于 (当前时间)，说明缓存还有效
+	cacheValidUntil := licData.LastCheck.Add(24 * time.Hour)
+	isCacheValid := time.Now().Before(cacheValidUntil)
+
+	// 3. 检查硬性过期时间
+	isLicenseExpired := time.Now().After(licData.ExpireDate.Add(24 * time.Hour))
+
+	if isLicenseExpired {
+		return map[string]interface{}{"valid": false, "msg": "授权已过期"}
+	}
+
+	// 4. 分支处理
+	if isCacheValid {
+		// 缓存有效：不连网，直接返回成功
+		daysLeft := int(time.Until(licData.ExpireDate.Add(24*time.Hour)).Hours() / 24)
 		return map[string]interface{}{
 			"valid": true,
-			"msg":   fmt.Sprintf("已激活，有效期至 %s (剩余 %d 天)", expDate.Format("2006-01-02"), daysLeft),
+			"msg":   fmt.Sprintf("已激活 (离线缓存)，有效期至 %s (剩余 %d 天)", licData.ExpireDate.Format("2006-01-02"), daysLeft),
+		}
+	} else {
+		// 缓存失效：强制联网验证
+		fmt.Println("Frontend: Cache expired, verifying online...")
+		expDate, valid, msg := checkOnlineConnect(licData.Code)
+		if valid {
+			// 联网验证成功 -> 更新本地缓存文件的 LastCheck
+			saveLocalLicense(licData.Code, expDate)
+			daysLeft := int(time.Until(expDate.Add(24*time.Hour)).Hours() / 24)
+			return map[string]interface{}{
+				"valid": true,
+				"msg":   fmt.Sprintf("已激活 (在线校验)，有效期至 %s (剩余 %d 天)", expDate.Format("2006-01-02"), daysLeft),
+			}
+		} else {
+			// 联网验证失败 (可能被封号、过期或断网)
+			return map[string]interface{}{"valid": false, "msg": "在线校验失败: " + msg}
 		}
 	}
-	return map[string]interface{}{"valid": false, "msg": "授权已过期或无效"}
 }
 
+// Activate 手动激活
 func (l *LicenseAPI) Activate(code string) map[string]interface{} {
 	code = strings.TrimSpace(code)
-	expDate, valid := verifyLicense(code)
+
+	// 激活必须联网
+	expDate, valid, msg := checkOnlineConnect(code)
+
 	if valid {
-		path := getLicenseFilePath()
-		ioutil.WriteFile(path, []byte(code), 0644)
+		// 成功 -> 写入本地文件
+		err := saveLocalLicense(code, expDate)
+		if err != nil {
+			return map[string]interface{}{"success": false, "msg": "写入授权文件失败"}
+		}
 		return map[string]interface{}{
 			"success": true,
 			"msg":     fmt.Sprintf("激活成功！有效期至: %s", expDate.Format("2006-01-02")),
 		}
 	}
-	return map[string]interface{}{"success": false, "msg": "激活码无效"}
+	return map[string]interface{}{"success": false, "msg": msg}
 }
 
-// --- 播放器桥接 ---
+// --- 播放器 UI 桥接 ---
 type PlayerBridge struct {
 	w         webview.WebView
 	isVisible bool
@@ -213,11 +342,8 @@ func (p *PlayerBridge) SetAlwaysOnTop(isTop bool) {
 	procSetWindowPos.Call(uintptr(hwnd), uintptr(targetOrder), 0, 0, 0, 0, 0x0003)
 }
 
-// ✅ 彻底修复：设置原生标题栏颜色 + 边框 + 文字颜色
 func (p *PlayerBridge) SetTitleColor(hex string) {
 	hwnd := p.w.Window()
-
-	// 1. 解析 Hex (#RRGGBB)
 	hex = strings.TrimPrefix(hex, "#")
 	v, err := strconv.ParseUint(hex, 16, 32)
 	if err != nil {
@@ -226,39 +352,23 @@ func (p *PlayerBridge) SetTitleColor(hex string) {
 	r := uint32(v>>16) & 0xFF
 	g := uint32(v>>8) & 0xFF
 	b := uint32(v) & 0xFF
-
-	// Windows COLORREF 格式是 BGR (0x00BBGGRR)
 	bgColor := r | (g << 8) | (b << 16)
-
-	// 2. 计算亮度，自动决定文字颜色 (黑/白)
-	// 亮度公式: 0.299R + 0.587G + 0.114B
 	var textColor uint32
 	var isDark uint32 = 0
 	if (float64(r)*0.299 + float64(g)*0.587 + float64(b)*0.114) > 128 {
-		textColor = 0x00000000 // 亮背景 -> 黑字
-		isDark = 0             // 浅色模式
+		textColor = 0x00000000
+		isDark = 0
 	} else {
-		textColor = 0x00FFFFFF // 暗背景 -> 白字
-		isDark = 1             // 深色模式 (影响窗口阴影)
+		textColor = 0x00FFFFFF
+		isDark = 1
 	}
-
 	ptrBg := uintptr(unsafe.Pointer(&bgColor))
 	ptrText := uintptr(unsafe.Pointer(&textColor))
 	ptrDark := uintptr(unsafe.Pointer(&isDark))
-
-	// 3. 应用 DWM 属性 (Win11 22000+)
-	// 设置标题栏背景
 	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_CAPTION_COLOR), ptrBg, 4)
-	// ✅ 关键：设置边框颜色，解决“白色窄边”问题
 	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_BORDER_COLOR), ptrBg, 4)
-	// 设置标题文字颜色
 	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_TEXT_COLOR), ptrText, 4)
-	// 设置窗口模式 (影响右键菜单和阴影)
 	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_USE_IMMERSIVE_DARK_MODE), ptrDark, 4)
-
-	// 4. ✅ 强制刷新窗口 (Trigger Frame Redraw)
-	// 必须调用 SetWindowPos 触发 NC (Non-Client) 区域重绘，否则颜色可能卡住
-	// Flags: SWP_FRAMECHANGED(0x0020) | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
 	procSetWindowPos.Call(uintptr(hwnd), 0, 0, 0, 0, 0, 0x0020|0x0002|0x0001|0x0004|0x0010)
 }
 
@@ -291,18 +401,6 @@ func (p *PlayerBridge) Log(msg string) { fmt.Println("Frontend:", msg) }
 
 // --- 主程序 ---
 func main() {
-	if len(os.Args) == 3 && os.Args[1] == "-gen" {
-		days := 365
-		fmt.Sscanf(os.Args[2], "%d", &days)
-		code, err := generateLicense(days)
-		if err != nil {
-			fmt.Println("Error:", err)
-		} else {
-			fmt.Printf("\n--- 激活码 (有效期 %d 天) ---\n%s\n--------------------------\n", days, code)
-		}
-		return
-	}
-
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		log.Fatal(err)
@@ -321,6 +419,7 @@ func main() {
 	bridge := &PlayerBridge{w: w, isVisible: true}
 	licApi := &LicenseAPI{}
 
+	// 绑定 JS 调用
 	w.Bind("toggleMode", bridge.ToggleMode)
 	w.Bind("goLog", bridge.Log)
 	w.Bind("winMin", bridge.WinMin)
@@ -328,14 +427,15 @@ func main() {
 	w.Bind("setTop", bridge.SetAlwaysOnTop)
 	w.Bind("winMove", bridge.WinMove)
 	w.Bind("bossKey", bridge.ToggleVisibility)
-	w.Bind("checkLicense", licApi.CheckSavedLicense)
-	w.Bind("activate", licApi.Activate)
+	w.Bind("checkLicense", licApi.CheckSavedLicense) // 启动检查（含缓存逻辑）
+	w.Bind("activate", licApi.Activate)              // 手动激活（强制联网）
 	w.Bind("setTitleColor", bridge.SetTitleColor)
 
 	htmlContent, _ := content.ReadFile("index.html")
 	finalHTML := strings.Replace(string(htmlContent), "{{PORT}}", fmt.Sprintf("%d", port), -1)
 	w.SetHtml(finalHTML)
 
+	// 快捷键监听线程
 	go func() {
 		for {
 			time.Sleep(50 * time.Millisecond)
