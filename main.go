@@ -157,9 +157,37 @@ func decryptData(encryptedStr string) ([]byte, error) {
 	return aesGCM.Open(nil, nonce, cipherText, nil)
 }
 
+// getHWID 获取简易硬件指纹 (使用第一个有效的 MAC 地址)
+func getHWID() string {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return "unknown_device"
+	}
+	// 拼接所有有效的 MAC 地址，防止单一网卡变动造成识别失败
+	var hwids []string
+	for _, i := range interfaces {
+		// 排除回环地址和未开启的接口
+		if i.Flags&net.FlagUp != 0 && len(i.HardwareAddr) > 0 {
+			hwids = append(hwids, i.HardwareAddr.String())
+		}
+	}
+	if len(hwids) > 0 {
+		// 返回第一个 MAC，或者你可以组合它们
+		return hwids[0]
+	}
+	return "unknown_device"
+}
+
 // checkOnlineConnect 联网校验 (核心逻辑)
+// checkOnlineConnect 联网校验 (含设备绑定逻辑)
 func checkOnlineConnect(code string) (time.Time, bool, string) {
-	// 使用混淆后的连接字符串连接数据库
+	// 1. 获取当前机器的硬件 ID
+	currentHWID := getHWID()
+	if currentHWID == "unknown_device" {
+		return time.Time{}, false, "无法识别设备硬件信息"
+	}
+
+	// 2. 连接数据库
 	db, err := sql.Open("mysql", getDSN())
 	if err != nil {
 		return time.Time{}, false, "数据库连接初始化失败"
@@ -167,17 +195,17 @@ func checkOnlineConnect(code string) (time.Time, bool, string) {
 	defer db.Close()
 	db.SetConnMaxLifetime(10 * time.Second)
 
-	// 测试连接
 	if err := db.Ping(); err != nil {
-		return time.Time{}, false, "无法连接验证服务器，请检查网络"
+		return time.Time{}, false, "无法连接验证服务器"
 	}
 
 	var expireDate time.Time
 	var isBanned int
+	var dbDeviceID sql.NullString // 使用 NullString 处理数据库中可能为 NULL 的情况
 
-	// 查询：只读操作
-	query := "SELECT expire_date, is_banned FROM app_licenses WHERE code = ? LIMIT 1"
-	err = db.QueryRow(query, code).Scan(&expireDate, &isBanned)
+	// 3. 查询：同时查出 device_id
+	query := "SELECT expire_date, is_banned, device_id FROM app_licenses WHERE code = ? LIMIT 1"
+	err = db.QueryRow(query, code).Scan(&expireDate, &isBanned, &dbDeviceID)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -190,7 +218,24 @@ func checkOnlineConnect(code string) (time.Time, bool, string) {
 		return time.Time{}, false, "该激活码已被封禁"
 	}
 
-	// 检查是否已过期
+	// 4. 设备绑定逻辑核心
+	// 情况 A: 数据库中 device_id 为空 (该码第一次使用) -> 执行绑定
+	if !dbDeviceID.Valid || dbDeviceID.String == "" {
+		updateQuery := "UPDATE app_licenses SET device_id = ? WHERE code = ?"
+		_, err := db.Exec(updateQuery, currentHWID, code)
+		if err != nil {
+			return time.Time{}, false, "设备绑定失败，请重试"
+		}
+		// 绑定成功，继续后续过期检查...
+	} else {
+		// 情况 B: 数据库已有记录 -> 检查是否与当前机器一致
+		if dbDeviceID.String != currentHWID {
+			return time.Time{}, false, "激活失败：该激活码已绑定其他设备"
+		}
+		// 情况 C: 一致 -> 通过，继续后续过期检查...
+	}
+
+	// 5. 检查是否已过期
 	if time.Now().After(expireDate.Add(24 * time.Hour)) {
 		return expireDate, false, "激活码已过期"
 	}
