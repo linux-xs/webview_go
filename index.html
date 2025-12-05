@@ -88,8 +88,8 @@
         .controls.mini .control-items { justify-content: center; gap: 0.4em; }
         .controls.mini input[type="text"] { display: none; }
         
-        /* ✅ 关键：迷你模式下隐藏调色板按钮 */
-        .controls.mini #btnColor { display: none; }
+        /* ✅ 关键：迷你模式下隐藏调色板和刷新按钮 */
+        .controls.mini #btnColor, .controls.mini #btnRefreshColor { display: none; }
         
         .controls.mini .only-mini { display: flex; } 
         .controls.mini button, .controls.mini .btn-move { margin-right: 0; } 
@@ -140,12 +140,15 @@
                 <input type="text" id="urlInput" placeholder="支持 视频 / 图片 / PDF 拖拽">
                 
                 <input type="color" id="colorPicker" style="display:none" onchange="submitColor()">
-                <button id="btnColor" onclick="openPicker()" title="设置标题栏颜色">🎨</button>
+                
 
+                <button onclick="clickBtn(playMedia)" title="播放/刷新">▶</button>
                 <button id="btnBoss" onclick="clickBtn(toggleBoss)" title="老板键 (Alt+Q)">👻</button>
                 <button id="btnTop" onclick="clickBtn(toggleTop)" title="置顶">📌</button>
-                <button onclick="clickBtn(playMedia)" title="播放/刷新">▶</button>
+
                 <button onclick="clickBtn(toggleSize)" title="切换模式">📺</button>
+                <button id="btnColor" onclick="openPicker()" title="设置标题栏颜色">🎨</button>
+                <button id="btnRefreshColor" onclick="submitColor()" title="如果颜色未生效，点此刷新">↻</button>
                 
                 <div class="btn-move only-mini" onmousedown="startDrag()" title="拖动">✥</div>
                 <button class="only-mini" onclick="clickBtn(doMin)" title="最小化">-</button>
@@ -178,13 +181,10 @@
         let hls = null;
         let currentType = 'video';
 
-        // ✅ 新增：颜色处理逻辑
         function openPicker() { document.getElementById('colorPicker').click(); }
         function submitColor() {
             const hex = document.getElementById('colorPicker').value;
-            // 调用后端 Go 函数修改颜色
             if(window.setTitleColor) window.setTitleColor(hex);
-            // 恢复焦点，避免空格键失效
             setTimeout(() => { document.body.focus(); }, 50);
         }
 
@@ -250,15 +250,57 @@
             if (!val.startsWith('http') && !val.startsWith('blob:')) {
                 val = `http://127.0.0.1:${PORT}/${val}`;
             }
+            // 输入框回车时，没有 typeHint，自动根据后缀判断
             loadResource(val);
         }
 
-        function loadResource(src) {
+        // 修改：增加 typeHint 参数
+        function loadResource(src, typeHint) {
             video.pause(); video.classList.remove('active'); img.classList.remove('active'); pdf.classList.remove('active');
             const cleanSrc = src.split('?')[0].toLowerCase();
-            if (cleanSrc.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) { currentType = 'image'; img.src = src; img.classList.add('active'); } 
-            else if (cleanSrc.endsWith('.pdf')) { currentType = 'pdf'; pdf.src = src; pdf.classList.add('active'); } 
-            else { currentType = 'video'; video.classList.add('active'); if (hls) { hls.destroy(); hls = null; } if (cleanSrc.includes('.m3u8')) { if (Hls.isSupported()) { hls = new Hls(); hls.loadSource(src); hls.attachMedia(video); hls.on(Hls.Events.MANIFEST_PARSED, function() { video.play(); }); } else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = src; video.addEventListener('loadedmetadata', function() { video.play(); }); } } else { video.src = src; video.play(); } }
+
+            // 逻辑：如果给了 typeHint (拖拽时)，就用 hint；否则依靠 cleanSrc 后缀判断 (输入框时)
+            let isImage = false;
+            let isPdf = false;
+
+            if (typeHint === 'image') isImage = true;
+            else if (typeHint === 'pdf') isPdf = true;
+            else if (typeHint === 'video') { /* is video */ }
+            else {
+                // 没有 hint，只能靠后缀
+                if (cleanSrc.match(/\.(jpg|jpeg|png|gif|webp|svg)$/)) isImage = true;
+                else if (cleanSrc.endsWith('.pdf')) isPdf = true;
+            }
+
+            if (isImage) { 
+                currentType = 'image'; 
+                img.src = src; 
+                img.classList.add('active'); 
+            } 
+            else if (isPdf) { 
+                currentType = 'pdf'; 
+                pdf.src = src; 
+                pdf.classList.add('active'); 
+            } 
+            else { 
+                currentType = 'video'; 
+                video.classList.add('active'); 
+                if (hls) { hls.destroy(); hls = null; } 
+                if (cleanSrc.includes('.m3u8')) { 
+                    if (Hls.isSupported()) { 
+                        hls = new Hls(); 
+                        hls.loadSource(src); 
+                        hls.attachMedia(video); 
+                        hls.on(Hls.Events.MANIFEST_PARSED, function() { video.play(); }); 
+                    } else if (video.canPlayType('application/vnd.apple.mpegurl')) { 
+                        video.src = src; 
+                        video.addEventListener('loadedmetadata', function() { video.play(); }); 
+                    } 
+                } else { 
+                    video.src = src; 
+                    video.play(); 
+                } 
+            }
         }
 
         window.addEventListener('keydown', (e) => {
@@ -271,7 +313,24 @@
         });
         document.addEventListener('mousedown', (e) => { if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') { setTimeout(() => { document.body.focus(); }, 10); } });
         document.body.addEventListener('dragover', e => e.preventDefault());
-        document.body.addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer.files.length > 0) { const file = e.dataTransfer.files[0]; const localUrl = URL.createObjectURL(file); input.value = file.name; const type = file.type; if (type.startsWith('image/')) { loadResource(localUrl); } else if (type === 'application/pdf') { loadResource(localUrl); } else { loadResource(localUrl); } } });
+        
+        // 修改：在 Drop 时传递明确的文件类型
+        document.body.addEventListener('drop', e => { 
+            e.preventDefault(); 
+            if (e.dataTransfer.files.length > 0) { 
+                const file = e.dataTransfer.files[0]; 
+                const localUrl = URL.createObjectURL(file); 
+                input.value = file.name; 
+                const type = file.type; 
+                if (type.startsWith('image/')) { 
+                    loadResource(localUrl, 'image'); 
+                } else if (type === 'application/pdf') { 
+                    loadResource(localUrl, 'pdf'); 
+                } else { 
+                    loadResource(localUrl, 'video'); 
+                } 
+            } 
+        });
         document.body.addEventListener('dblclick', (e) => { if(e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return; if(e.target.closest('.controls')) return; if (currentType === 'video') { video.paused ? video.play() : video.pause(); } });
     </script>
 </body>

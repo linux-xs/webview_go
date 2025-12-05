@@ -40,8 +40,7 @@ const (
 // 混淆密钥 (必须与生成工具中的一致)
 var xorKey = []byte("MyObfuscationKey2025")
 
-// ⚠️⚠️⚠️ [重要] 请用 tool.go 生成的数组替换下面这个示例数组 ⚠️⚠️⚠️
-// 当前示例解密后是: "root:123456@tcp(127.0.0.1:3306)/test_db?charset=utf8mb4&parseTime=True&loc=Local"
+// ⚠️⚠️⚠️ [重要] 保持原有的数据库配置 ⚠️⚠️⚠️
 var dbDsnSecret = []byte{
 	0x2c, 0x09, 0x3f, 0x3d, 0x0a, 0x1c, 0x10, 0x06, 0x0f, 0x07,
 	0x0c, 0x1c, 0x54, 0x19, 0x06, 0x3c, 0x41, 0x08, 0x60, 0x4d,
@@ -342,6 +341,8 @@ func (p *PlayerBridge) SetAlwaysOnTop(isTop bool) {
 	procSetWindowPos.Call(uintptr(hwnd), uintptr(targetOrder), 0, 0, 0, 0, 0x0003)
 }
 
+// SetTitleColor 设置颜色并强制刷新样式
+// 修复后的 SetTitleColor 函数
 func (p *PlayerBridge) SetTitleColor(hex string) {
 	hwnd := p.w.Window()
 	hex = strings.TrimPrefix(hex, "#")
@@ -355,21 +356,49 @@ func (p *PlayerBridge) SetTitleColor(hex string) {
 	bgColor := r | (g << 8) | (b << 16)
 	var textColor uint32
 	var isDark uint32 = 0
+
+	// 简单的深浅色判断
 	if (float64(r)*0.299 + float64(g)*0.587 + float64(b)*0.114) > 128 {
-		textColor = 0x00000000
+		textColor = 0x00000000 // 黑色文字
 		isDark = 0
 	} else {
-		textColor = 0x00FFFFFF
+		textColor = 0x00FFFFFF // 白色文字
 		isDark = 1
 	}
+
 	ptrBg := uintptr(unsafe.Pointer(&bgColor))
 	ptrText := uintptr(unsafe.Pointer(&textColor))
 	ptrDark := uintptr(unsafe.Pointer(&isDark))
+
+	// 1. 设置 DWM 属性
 	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_CAPTION_COLOR), ptrBg, 4)
 	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_BORDER_COLOR), ptrBg, 4)
 	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_TEXT_COLOR), ptrText, 4)
 	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_USE_IMMERSIVE_DARK_MODE), ptrDark, 4)
-	procSetWindowPos.Call(uintptr(hwnd), 0, 0, 0, 0, 0, 0x0020|0x0002|0x0001|0x0004|0x0010)
+
+	// 2. ⚠️ 强制刷新 Hack
+	// 【修复点】：先转为 int，避免常量直接转 uintptr 报错
+	gwlStyle := int(GWL_STYLE)
+
+	style, _, _ := procGetWindowLong.Call(uintptr(hwnd), uintptr(gwlStyle))
+	currentStyle := int32(style)
+
+	// 如果当前是有标题栏模式，才进行刷新操作
+	if currentStyle&WS_CAPTION != 0 {
+		// 暂时移除 WS_CAPTION
+		// 【修复点】：使用 gwlStyle 变量
+		procSetWindowLong.Call(uintptr(hwnd), uintptr(gwlStyle), uintptr(currentStyle&^WS_CAPTION))
+
+		// 立即应用
+		procSetWindowPos.Call(uintptr(hwnd), 0, 0, 0, 0, 0, 0x0020|0x0001|0x0002|0x0004|0x0010)
+
+		// 立即加回 WS_CAPTION
+		// 【修复点】：使用 gwlStyle 变量
+		procSetWindowLong.Call(uintptr(hwnd), uintptr(gwlStyle), uintptr(currentStyle))
+	}
+
+	// 3. 最终应用更改
+	procSetWindowPos.Call(uintptr(hwnd), 0, 0, 0, 0, 0, 0x0020|0x0001|0x0002|0x0004|0x0010)
 }
 
 func (p *PlayerBridge) ToggleMode(isMini bool) {
