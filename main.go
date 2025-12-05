@@ -14,11 +14,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv" // ✅ 新增
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
-	"unsafe" // ✅ 新增
+	"unsafe"
 
 	webview "github.com/webview/webview_go"
 )
@@ -33,7 +33,7 @@ const AppName = "MyVideoPlayer"
 // --- Windows API 定义 ---
 var (
 	user32                    = syscall.NewLazyDLL("user32.dll")
-	dwmapi                    = syscall.NewLazyDLL("dwmapi.dll") // ✅ 新增：用于修改标题栏颜色
+	dwmapi                    = syscall.NewLazyDLL("dwmapi.dll")
 	procGetWindowLong         = user32.NewProc("GetWindowLongW")
 	procSetWindowLong         = user32.NewProc("SetWindowLongW")
 	procSetWindowPos          = user32.NewProc("SetWindowPos")
@@ -42,23 +42,28 @@ var (
 	procShowWindow            = user32.NewProc("ShowWindow")
 	procGetAsyncKeyState      = user32.NewProc("GetAsyncKeyState")
 	procSetForegroundWindow   = user32.NewProc("SetForegroundWindow")
-	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute") // ✅ 新增
+	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
 )
 
 const (
-	GWL_STYLE           = -16
-	WS_CAPTION          = 0x00C00000
-	WS_THICKFRAME       = 0x00040000
-	SWP_FRAMECHANGED    = 0x0020
-	WM_SYSCOMMAND       = 0x0112
-	SC_MINIMIZE         = 0xF020
-	SC_DRAG_MOVE        = 0xF012
-	SW_HIDE             = 0
-	SW_SHOW             = 5
-	SW_RESTORE          = 9
-	VK_MENU             = 0x12
-	VK_Q                = 0x51
-	DWMWA_CAPTION_COLOR = 35 // ✅ Windows 11 标题栏颜色属性
+	GWL_STYLE        = -16
+	WS_CAPTION       = 0x00C00000
+	WS_THICKFRAME    = 0x00040000
+	SWP_FRAMECHANGED = 0x0020
+	WM_SYSCOMMAND    = 0x0112
+	SC_MINIMIZE      = 0xF020
+	SC_DRAG_MOVE     = 0xF012
+	SW_HIDE          = 0
+	SW_SHOW          = 5
+	SW_RESTORE       = 9
+	VK_MENU          = 0x12
+	VK_Q             = 0x51
+
+	// ✅ DWM 属性常量 (Windows 11)
+	DWMWA_USE_IMMERSIVE_DARK_MODE = 20 // 启用深色模式支持 (Win10/11)
+	DWMWA_BORDER_COLOR            = 34 // 窗口边框颜色 (解决窄边问题)
+	DWMWA_CAPTION_COLOR           = 35 // 标题栏背景颜色
+	DWMWA_TEXT_COLOR              = 36 // 标题栏文字颜色
 )
 
 // --- 激活模块工具函数 ---
@@ -208,24 +213,53 @@ func (p *PlayerBridge) SetAlwaysOnTop(isTop bool) {
 	procSetWindowPos.Call(uintptr(hwnd), uintptr(targetOrder), 0, 0, 0, 0, 0x0003)
 }
 
-// ✅ 新增：设置原生标题栏颜色 (Windows 11 特性)
+// ✅ 彻底修复：设置原生标题栏颜色 + 边框 + 文字颜色
 func (p *PlayerBridge) SetTitleColor(hex string) {
 	hwnd := p.w.Window()
-	// 解析 Hex (#RRGGBB) 到 COLORREF (0x00BBGGRR)
+
+	// 1. 解析 Hex (#RRGGBB)
 	hex = strings.TrimPrefix(hex, "#")
 	v, err := strconv.ParseUint(hex, 16, 32)
 	if err != nil {
 		return
 	}
-	// Windows COLORREF 格式是 BGR
 	r := uint32(v>>16) & 0xFF
 	g := uint32(v>>8) & 0xFF
 	b := uint32(v) & 0xFF
-	color := r | (g << 8) | (b << 16)
 
-	ptr := uintptr(unsafe.Pointer(&color))
-	// 调用 DwmSetWindowAttribute 修改标题栏颜色
-	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_CAPTION_COLOR), ptr, 4)
+	// Windows COLORREF 格式是 BGR (0x00BBGGRR)
+	bgColor := r | (g << 8) | (b << 16)
+
+	// 2. 计算亮度，自动决定文字颜色 (黑/白)
+	// 亮度公式: 0.299R + 0.587G + 0.114B
+	var textColor uint32
+	var isDark uint32 = 0
+	if (float64(r)*0.299 + float64(g)*0.587 + float64(b)*0.114) > 128 {
+		textColor = 0x00000000 // 亮背景 -> 黑字
+		isDark = 0             // 浅色模式
+	} else {
+		textColor = 0x00FFFFFF // 暗背景 -> 白字
+		isDark = 1             // 深色模式 (影响窗口阴影)
+	}
+
+	ptrBg := uintptr(unsafe.Pointer(&bgColor))
+	ptrText := uintptr(unsafe.Pointer(&textColor))
+	ptrDark := uintptr(unsafe.Pointer(&isDark))
+
+	// 3. 应用 DWM 属性 (Win11 22000+)
+	// 设置标题栏背景
+	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_CAPTION_COLOR), ptrBg, 4)
+	// ✅ 关键：设置边框颜色，解决“白色窄边”问题
+	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_BORDER_COLOR), ptrBg, 4)
+	// 设置标题文字颜色
+	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_TEXT_COLOR), ptrText, 4)
+	// 设置窗口模式 (影响右键菜单和阴影)
+	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_USE_IMMERSIVE_DARK_MODE), ptrDark, 4)
+
+	// 4. ✅ 强制刷新窗口 (Trigger Frame Redraw)
+	// 必须调用 SetWindowPos 触发 NC (Non-Client) 区域重绘，否则颜色可能卡住
+	// Flags: SWP_FRAMECHANGED(0x0020) | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+	procSetWindowPos.Call(uintptr(hwnd), 0, 0, 0, 0, 0, 0x0020|0x0002|0x0001|0x0004|0x0010)
 }
 
 func (p *PlayerBridge) ToggleMode(isMini bool) {
@@ -296,7 +330,6 @@ func main() {
 	w.Bind("bossKey", bridge.ToggleVisibility)
 	w.Bind("checkLicense", licApi.CheckSavedLicense)
 	w.Bind("activate", licApi.Activate)
-	// ✅ 新增绑定
 	w.Bind("setTitleColor", bridge.SetTitleColor)
 
 	htmlContent, _ := content.ReadFile("index.html")
