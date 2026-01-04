@@ -12,8 +12,11 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"mime"
 	"net"
 	"net/http"
+	"net/http/httputil" // 【新增】代理工具包
+	"net/url"           // 【新增】URL解析包
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,7 +25,7 @@ import (
 	"time"
 	"unsafe"
 
-	_ "github.com/go-sql-driver/mysql" // MySQL 驱动
+	_ "github.com/go-sql-driver/mysql"
 	webview "github.com/webview/webview_go"
 )
 
@@ -178,7 +181,6 @@ func getHWID() string {
 	return "unknown_device"
 }
 
-// checkOnlineConnect 联网校验 (核心逻辑)
 // checkOnlineConnect 联网校验 (含设备绑定逻辑)
 func checkOnlineConnect(code string) (time.Time, bool, string) {
 	// 1. 获取当前机器的硬件 ID
@@ -387,7 +389,6 @@ func (p *PlayerBridge) SetAlwaysOnTop(isTop bool) {
 }
 
 // SetTitleColor 设置颜色并强制刷新样式
-// 修复后的 SetTitleColor 函数
 func (p *PlayerBridge) SetTitleColor(hex string) {
 	hwnd := p.w.Window()
 	hex = strings.TrimPrefix(hex, "#")
@@ -422,7 +423,6 @@ func (p *PlayerBridge) SetTitleColor(hex string) {
 	procDwmSetWindowAttribute.Call(uintptr(hwnd), uintptr(DWMWA_USE_IMMERSIVE_DARK_MODE), ptrDark, 4)
 
 	// 2. ⚠️ 强制刷新 Hack
-	// 【修复点】：先转为 int，避免常量直接转 uintptr 报错
 	gwlStyle := int(GWL_STYLE)
 
 	style, _, _ := procGetWindowLong.Call(uintptr(hwnd), uintptr(gwlStyle))
@@ -430,15 +430,8 @@ func (p *PlayerBridge) SetTitleColor(hex string) {
 
 	// 如果当前是有标题栏模式，才进行刷新操作
 	if currentStyle&WS_CAPTION != 0 {
-		// 暂时移除 WS_CAPTION
-		// 【修复点】：使用 gwlStyle 变量
 		procSetWindowLong.Call(uintptr(hwnd), uintptr(gwlStyle), uintptr(currentStyle&^WS_CAPTION))
-
-		// 立即应用
 		procSetWindowPos.Call(uintptr(hwnd), 0, 0, 0, 0, 0, 0x0020|0x0001|0x0002|0x0004|0x0010)
-
-		// 立即加回 WS_CAPTION
-		// 【修复点】：使用 gwlStyle 变量
 		procSetWindowLong.Call(uintptr(hwnd), uintptr(gwlStyle), uintptr(currentStyle))
 	}
 
@@ -475,14 +468,28 @@ func (p *PlayerBridge) Log(msg string) { fmt.Println("Frontend:", msg) }
 
 // --- 主程序 ---
 func main() {
+	mime.AddExtensionType(".m3u8", "application/vnd.apple.mpegurl")
+	mime.AddExtensionType(".ts", "video/mp2t")
+
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		log.Fatal(err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	dir, _ := os.Getwd()
-	fileHandler := http.FileServer(http.Dir(dir))
-	go func() { http.Serve(listener, fileHandler) }()
+
+	// 【核心修改】使用 ServeMux 替代原来的 FileServer
+	mux := http.NewServeMux()
+
+	// 1. 保留原有的静态文件服务
+	mux.Handle("/", http.FileServer(http.Dir(dir)))
+
+	// 2. 新增：视频代理服务
+	mux.HandleFunc("/proxy/", videoProxyHandler)
+
+	// 启动服务器
+	go func() { http.Serve(listener, mux) }()
+
 	fmt.Printf("Server started at http://127.0.0.1:%d\n", port)
 
 	w := webview.New(true)
@@ -501,8 +508,8 @@ func main() {
 	w.Bind("setTop", bridge.SetAlwaysOnTop)
 	w.Bind("winMove", bridge.WinMove)
 	w.Bind("bossKey", bridge.ToggleVisibility)
-	w.Bind("checkLicense", licApi.CheckSavedLicense) // 启动检查（含缓存逻辑）
-	w.Bind("activate", licApi.Activate)              // 手动激活（强制联网）
+	w.Bind("checkLicense", licApi.CheckSavedLicense)
+	w.Bind("activate", licApi.Activate)
 	w.Bind("setTitleColor", bridge.SetTitleColor)
 
 	htmlContent, _ := content.ReadFile("index.html")
@@ -523,4 +530,46 @@ func main() {
 	}()
 
 	w.Run()
+}
+
+// 【新增】处理视频代理的专用函数
+func videoProxyHandler(w http.ResponseWriter, r *http.Request) {
+	// 去掉 /proxy/ 前缀
+	pathStr := strings.TrimPrefix(r.URL.Path, "/proxy/")
+
+	// 分割域名和路径
+	parts := strings.SplitN(pathStr, "/", 2)
+	if len(parts) < 2 {
+		http.Error(w, "Invalid Proxy URL", 400)
+		return
+	}
+
+	targetHost := parts[0]
+	targetPath := "/" + parts[1]
+
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			targetURL := url.URL{
+				Scheme: "https",
+				Host:   targetHost,
+				Path:   targetPath,
+			}
+			req.URL = &targetURL
+			req.Host = targetHost // 关键：伪装 Host
+
+			// 伪造头部
+			req.Header.Set("Referer", "https://"+targetHost+"/")
+			req.Header.Set("Origin", "https://"+targetHost)
+			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+			// 清除可能造成干扰的头
+			req.Header.Del("Cookie")
+		},
+		ModifyResponse: func(r *http.Response) error {
+			r.Header.Set("Access-Control-Allow-Origin", "*")
+			return nil
+		},
+	}
+
+	proxy.ServeHTTP(w, r)
 }

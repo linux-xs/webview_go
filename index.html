@@ -99,7 +99,6 @@
             background: #1a1a1a; z-index: 10000;
             display: flex; flex-direction: column; justify-content: center; align-items: center; 
             -webkit-app-region: no-drag; 
-            /* ⚠️ 修改 1: 默认隐藏，防止启动闪烁 */
             display: none; 
         }
         .login-box {
@@ -227,12 +226,10 @@
             if (window.checkLicense) {
                 try {
                     const status = await window.checkLicense();
-                    // ⚠️ 修改 2: 只有当验证失败 (valid === false) 时，才手动把覆盖层显示出来
-                    // 验证成功时什么都不做，因为默认就是隐藏的
                     if (status.valid) { 
                         console.log(status.msg); 
                     } else { 
-                        overlay.style.display = 'flex'; // 显示激活框
+                        overlay.style.display = 'flex'; 
                         actMsg.innerText = status.msg; 
                     }
                 } catch (e) { console.error(e); }
@@ -252,31 +249,45 @@
             } catch (e) { actMsg.innerText = "接口错误"; }
         }
 
+        // --- 核心修改：支持本地文件和网络代理播放 ---
         function playMedia() {
-            let val = input.value;
+            let val = input.value.trim();
             if (!val) return;
-            if (!val.startsWith('http') && !val.startsWith('blob:')) {
-                val = `http://127.0.0.1:${PORT}/${val}`;
+
+            // 1. 本地 Blob 文件 (拖拽产生)，直接加载
+            if (val.startsWith('blob:')) {
+                loadResource(val);
+                return;
             }
-            loadResource(val);
+
+            // 2. HTTP/HTTPS 网络链接，走 Go 代理
+            if (val.startsWith('http://') || val.startsWith('https://')) {
+                const rawUrl = val.replace(/^https?:\/\//, '');
+                // 拼接代理地址
+                const proxyUrl = `http://127.0.0.1:${PORT}/proxy/${rawUrl}`;
+                console.log("通过代理播放:", proxyUrl);
+                loadResource(proxyUrl);
+                return;
+            }
+
+            // 3. 既不是 blob 也不是 http，默认为本地相对路径文件
+            const localFileUrl = `http://127.0.0.1:${PORT}/${val}`;
+            loadResource(localFileUrl);
         }
+
         function closeMedia() {
-            // 1. 停止视频
             video.pause();
             video.removeAttribute('src'); 
             video.load(); 
             if (hls) { hls.destroy(); hls = null; }
 
-            // 2. 清除图片和PDF
             img.removeAttribute('src');
             pdf.removeAttribute('src');
 
-            // 3. 隐藏所有播放窗口
             video.classList.remove('active');
             img.classList.remove('active');
             pdf.classList.remove('active');
 
-            // 4. 重置状态
             input.value = ''; 
             currentType = '';
         }
@@ -310,12 +321,36 @@
                 currentType = 'video'; 
                 video.classList.add('active'); 
                 if (hls) { hls.destroy(); hls = null; } 
+                
                 if (cleanSrc.includes('.m3u8')) { 
                     if (Hls.isSupported()) { 
-                        hls = new Hls(); 
+                        hls = new Hls({ debug: false });
                         hls.loadSource(src); 
                         hls.attachMedia(video); 
-                        hls.on(Hls.Events.MANIFEST_PARSED, function() { video.play(); }); 
+                        
+                        hls.on(Hls.Events.MANIFEST_PARSED, function() { 
+                            video.play().catch(e => console.log("Auto-play blocked:", e));
+                        }); 
+
+                        hls.on(Hls.Events.ERROR, function (event, data) {
+                            if(window.goLog) window.goLog("HLS Error: " + data.type + " - " + data.details);
+                            if (data.fatal) {
+                                switch (data.type) {
+                                    case Hls.ErrorTypes.NETWORK_ERROR:
+                                        console.log("fatal network error, try to recover");
+                                        hls.startLoad();
+                                        break;
+                                    case Hls.ErrorTypes.MEDIA_ERROR:
+                                        console.log("fatal media error, try to recover");
+                                        hls.recoverMediaError();
+                                        break;
+                                    default:
+                                        hls.destroy();
+                                        break;
+                                }
+                            }
+                        });
+                        
                     } else if (video.canPlayType('application/vnd.apple.mpegurl')) { 
                         video.src = src; 
                         video.addEventListener('loadedmetadata', function() { video.play(); }); 
